@@ -1,0 +1,423 @@
+{
+  "name": "Atsakymai",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "cb7456ae-9bbf-4080-9d4a-af4c87ba5311",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [
+        0,
+        0
+      ],
+      "id": "b2449c1c-38ff-423e-bfcc-139df518c897",
+      "name": "Webhook",
+      "webhookId": "cb7456ae-9bbf-4080-9d4a-af4c87ba5311"
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "=Iš {{ $json.body.zinute }}  ištrauk tik vežėjo pasiūlytą kainą (skaičių), butinai nurodyk ar kaina su ar be pvm ir terminą. Atsakyk būtinai JSON Formatu \n\nPAVYZDYS: {\"kaina\": 500 (su/be PVM), \"terminas\": \"2-3 d.\"}",
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 3.1,
+      "position": [
+        208,
+        0
+      ],
+      "id": "3de56c92-9dd9-4190-9fc7-d8cad88a8d2b",
+      "name": "AI Agent"
+    },
+    {
+      "parameters": {
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.lmChatGoogleGemini",
+      "typeVersion": 1,
+      "position": [
+        80,
+        208
+      ],
+      "id": "526f979d-ffd5-4f7b-b470-90c760d001fd",
+      "name": "Google Gemini Chat Model",
+      "credentials": {
+        "googlePalmApi": {
+          "id": "hf78HPjOnGya0r0L",
+          "name": "Google Gemini(PaLM) Api account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "documentId": {
+          "__rl": true,
+          "value": "18OrefK4j2kSvEQ1QLEf167tMbkJENkENOO3GXU947i0",
+          "mode": "list",
+          "cachedResultName": "Krovimo info",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/18OrefK4j2kSvEQ1QLEf167tMbkJENkENOO3GXU947i0/edit?usp=drivesdk"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "gid=0",
+          "mode": "list",
+          "cachedResultName": "Sheet1",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/18OrefK4j2kSvEQ1QLEf167tMbkJENkENOO3GXU947i0/edit#gid=0"
+        },
+        "filtersUI": {
+          "values": [
+            {
+              "lookupColumn": "vidinis ID",
+              "lookupValue": "={{ $('Webhook').item.json.body.vidinisID }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        560,
+        0
+      ],
+      "id": "dc13e5f0-c3a5-4ee1-8418-9e84bca345fa",
+      "name": "Get row(s) in sheet",
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "RYZIdLkMI5MKlsnc",
+          "name": "Google Sheets account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const rawAiOutput = $node[\"AI Agent\"].json.output;\nconst email = $node[\"Webhook\"].json.body.siuntejas.toLowerCase();\n\n// 1. Identifikuojame stulpelį pagal el. pašto adresą\nlet stulpelis = \"\";\nif (email.includes(\"asta.gudiskiene@axistransport.lt\")) stulpelis = \"Axis_Asta\";\nelse if (email.includes(\"darius.karaliunas@kuehne-nagel.com\")) stulpelis = \"KN_Darius\";\nelse if (email.includes(\"italy@easting.lt\")) stulpelis = \"Easting_ITA\";\nelse if (email.includes(\"urte.meskauskaite@gevara.lt\")) stulpelis = \"Gev_Urte\";\nelse if (email.includes(\"italy@gevara.lt\")) stulpelis = \"Gev_ITA\";\nelse if (email.includes(\"jurgita.korolioviene@dhl.com\")) stulpelis = \"DHL_Jurgita\";\nelse if (email.includes(\"lukas@cargobooking.lt\")) stulpelis = \"Cargobook\";\nelse if (email.includes(\"edita.kubiliute@hellmann.com\")) stulpelis = \"Hellmann\";\nelse if (email.includes(\"mantas.andriukaitis@rhenus.com\")) stulpelis = \"Rhenus\";\nelse if (email.includes(\"poland@easting.lt\")) stulpelis = \"Easting_POL\";\nelse if (email.includes(\"poland@gevara.lt\")) stulpelis = \"Gev_POL\";\nelse if (email.includes(\"ami@ntglithuania.lt\")) stulpelis = \"NTG_Andrius\";\nelse if (email.includes(\"gstrazdas@bsc.lt\")) stulpelis = \"BSC\";\nelse if (email.includes(\"elvyra.ronkaitiene@easting.lt\")) stulpelis = \"Easting_NL\";\nelse if (email.includes(\"sales@gevara.lt\")) stulpelis = \"Gev_Sales\";\nelse if (email.includes(\"iba@ntglithuania.lt\")) stulpelis = \"NTG_Inga\";\nelse if (email.includes(\"alanasop1@gmail.com\")) stulpelis = \"Axis_Asta\";\n\n// 2. Ištraukiame kainą ir terminą\nconst kainaMatch = rawAiOutput.match(/\"kaina\":\\s*\"?([0-9.,]+)/i);\nconst kaina = kainaMatch ? kainaMatch[1].replace(',', '.') : \"0\";\n\nconst terminasMatch = rawAiOutput.match(/\"terminas\":\\s*\"?([^\",}\\n]+)\"?/i);\nconst terminas = terminasMatch ? terminasMatch[1].trim() : \"nenurodyta\";\n\nreturn {\n  stulpelis: stulpelis,\n  iraso_tekstas: `${kaina} EUR (${terminas})`,\n  row_number: $node[\"Get row(s) in sheet\"].json.row_number\n};"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        768,
+        0
+      ],
+      "id": "32514597-3be6-43c1-9526-122fe004b44f",
+      "name": "Code in JavaScript"
+    },
+    {
+      "parameters": {
+        "operation": "appendOrUpdate",
+        "documentId": {
+          "__rl": true,
+          "value": "18OrefK4j2kSvEQ1QLEf167tMbkJENkENOO3GXU947i0",
+          "mode": "list",
+          "cachedResultName": "Krovimo info",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/18OrefK4j2kSvEQ1QLEf167tMbkJENkENOO3GXU947i0/edit?usp=drivesdk"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": 1629254505,
+          "mode": "list",
+          "cachedResultName": "Pasiūlymai",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/18OrefK4j2kSvEQ1QLEf167tMbkJENkENOO3GXU947i0/edit#gid=1629254505"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "Data": "={{ $now.format('yyyy-MM-dd') }}",
+            "Vidinis ID (uzsakymo)": "={{ $node[\"Webhook\"].json.body.vidinisID }}",
+            "Axis_Asta": "={{ $json.stulpelis == 'Axis_Asta' ? $json.iraso_tekstas : $node[\"Get row(s) in sheet\"].json.Axis_Asta }}",
+            "KN_Darius": "={{ $json.stulpelis == 'KN_Darius' ? $json.iraso_tekstas : $node[\"Get row(s) in sheet\"].json.KN_Darius }}",
+            "Easting_ITA": "={{ $json.stulpelis == 'Easting_ITA' ? $json.iraso_tekstas : $node[\"Get row(s) in sheet\"].json.Easting_ITA }}",
+            "Gev_Urte": "={{ $json.stulpelis == 'Gev_Urte' ? $json.iraso_tekstas : $node[\"Get row(s) in sheet\"].json.Gev_Urte }}",
+            "Gev_ITA": "={{ $json.stulpelis == 'Gev_ITA' ? $json.iraso_tekstas : $node[\"Get row(s) in sheet\"].json.Gev_ITA }}",
+            "DHL_Jurgita": "={{ $json.stulpelis == 'DHL_Jurgita' ? $json.iraso_tekstas : $node[\"Get row(s) in sheet\"].json.DHL_Jurgita }}",
+            "Cargobook": "={{ $json.stulpelis == 'Cargobook' ? $json.iraso_tekstas : $node[\"Get row(s) in sheet\"].json.Cargobook }}",
+            "Hellmann": "={{ $json.stulpelis == 'Hellmann' ? $json.iraso_tekstas : $node[\"Get row(s) in sheet\"].json.Hellmann }}",
+            "Rhenus": "={{ $json.stulpelis == 'Rhenus' ? $json.iraso_tekstas : $node[\"Get row(s) in sheet\"].json.Rhenus }}",
+            "Easting_POL": "={{ $json.stulpelis == 'Easting_POL' ? $json.iraso_tekstas : $node[\"Get row(s) in sheet\"].json.Easting_POL }}",
+            "Gev_POL": "={{ $json.stulpelis == 'Gev_POL' ? $json.iraso_tekstas : $node[\"Get row(s) in sheet\"].json.Gev_POL }}",
+            "NTG_Andrius": "={{ $json.stulpelis == 'NTG_Andrius' ? $json.iraso_tekstas : $node[\"Get row(s) in sheet\"].json.NTG_Andrius }}",
+            "BSC": "={{ $json.stulpelis == 'BSC' ? $json.iraso_tekstas : $node[\"Get row(s) in sheet\"].json.BSC }}",
+            "Easting_NL": "={{ $json.stulpelis == 'Easting_NL' ? $json.iraso_tekstas : $node[\"Get row(s) in sheet\"].json.Easting_NL }}",
+            "Gev_Sales": "={{ $json.stulpelis == 'Gev_Sales' ? $json.iraso_tekstas : $node[\"Get row(s) in sheet\"].json.Gev_Sales }}",
+            "NTG_Inga": "={{ $json.stulpelis == 'NTG_Inga' ? $json.iraso_tekstas : $node[\"Get row(s) in sheet\"].json.NTG_Inga }}"
+          },
+          "matchingColumns": [
+            "vidinis ID"
+          ],
+          "schema": [
+            {
+              "id": "Data",
+              "displayName": "Data",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Vidinis ID (uzsakymo)",
+              "displayName": "Vidinis ID (uzsakymo)",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Axis_Asta",
+              "displayName": "Axis_Asta",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "KN_Darius",
+              "displayName": "KN_Darius",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Easting_ITA",
+              "displayName": "Easting_ITA",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Gev_Urte",
+              "displayName": "Gev_Urte",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Gev_ITA",
+              "displayName": "Gev_ITA",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "DHL_Jurgita",
+              "displayName": "DHL_Jurgita",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Cargobook",
+              "displayName": "Cargobook",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Hellmann",
+              "displayName": "Hellmann",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Rhenus",
+              "displayName": "Rhenus",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Easting_POL",
+              "displayName": "Easting_POL",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Gev_POL",
+              "displayName": "Gev_POL",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "NTG_Andrius",
+              "displayName": "NTG_Andrius",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "BSC",
+              "displayName": "BSC",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Easting_NL",
+              "displayName": "Easting_NL",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Gev_Sales",
+              "displayName": "Gev_Sales",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "NTG_Inga",
+              "displayName": "NTG_Inga",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        976,
+        0
+      ],
+      "id": "6aeabeba-17ef-4166-8b51-48f6eeefdd59",
+      "name": "Append or update row in sheet",
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "RYZIdLkMI5MKlsnc",
+          "name": "Google Sheets account"
+        }
+      }
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Google Gemini Chat Model": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "AI Agent": {
+      "main": [
+        [
+          {
+            "node": "Get row(s) in sheet",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get row(s) in sheet": {
+      "main": [
+        [
+          {
+            "node": "Code in JavaScript",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code in JavaScript": {
+      "main": [
+        [
+          {
+            "node": "Append or update row in sheet",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "availableInMCP": false
+  },
+  "versionId": "a7245ae9-e044-4338-bbc2-cfe3f9a64569",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "69c62c505599bb49c242ec3951588a123390dd889fc08ab6804623392dc47150"
+  },
+  "id": "w7tz1joA3WZ1lQ6V1ooHW",
+  "tags": []
+}

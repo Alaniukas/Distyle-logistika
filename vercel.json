@@ -1,0 +1,12 @@
+{
+  "crons": [
+    {
+      "path": "/api/cron/sync-mail",
+      "schedule": "*/10 * * * *"
+    },
+    {
+      "path": "/api/cron/sync-offers",
+      "schedule": "*/10 * * * *"
+    }
+  ]
+}

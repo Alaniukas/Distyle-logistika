@@ -1,0 +1,663 @@
+{
+  "name": "Gamintojai",
+  "nodes": [
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "=Tu esi logistikos duomenų analizės ekspertas. Tavo užduotis – susumuoti visą informaciją apie siuntą į vieną bendrą suvestinę.\n\nŠALTINIS 1 (Visų dokumentų tekstas): {{ $json.pdf_text.join('\\n') }}\nŠALTINIS 2 (Susirašinėjimo tekstas): {{ $node[\"Get a message\"].json.text }}\nGAMINTOJAS: {{ $json.manufacturer_name[0] }}\n\n\nLOGINĖS INSTRUKCIJOS:\n1. SUMAVIMAS: Identifikuok visas prekes/padėklus visuose šaltiniuose. Susumuok jų bendrą svorį (weight), bendrą tūrį (volume) ir bendrą krovinio vertę (cargo_value). \n2. MATMENYS: Ignoruok individualius ilgį/plotį/aukštį – pateik tik galutines sumas.\n3. ADRESAS IR ŠALIS: Paėmimo adresą imk iš ŠALTINIO 2 (laiško), ieškok \"Pick up address\"; \"You can pick up here\" ar kažko panašaus. Jei ten nėra – iš dokumentų (PDF arba Excel). Pašalink įmonių pavadinimus, palik gatvę, pašto kodą ir miestą. Nustatyk šalį (country).\n4. VERTĖ: Surask visų prekių bendrą sumą (Invoice Total/Value) dokumentuose.\n5. KOMENTARAI: Iš ŠALTINIO 2 (laiško teksto) Sukonspektuok ir ištrauk tik svarbiausius komentarus, jei yra daug teksto, kuris nereikšmingas, jį sutrumpink. ištrauk bet kokią papildomą informaciją, kuri nėra svoris, tūris ar adresas. Pavyzdžiui: kada prekės bus paruoštos, prašymai susisiekti su vežėju, krovos laikas ir t.t. Jei komentarų nėra, rašyk \"Nėra\". \n6. IDENTIFIKAVIMAS: Surask užsakymo/krovimo numerį. Svarbu - prioritetikšai laikyk \"pakrovimo\" numerį kaip užsakymo. Jeigu nėra atskirai išskirto pakrovimo/užsakymo numerio, tada gali rodyti produktų nurodytus užsakymo numerius. \n7. SVARBU - viską rašyk Lietuviškai (gamintojo šalį, jeigu yra gamintojo komentaras.)\n\nAtsakymą pateik kaip VIENĄ JSON objektą (ne masyvą):\n{\n  \"order_number\": \"...\",\n  \"weight\": 0.0,\n  \"volume\": 0.0,\n  \"pickup_address\": \"...\",\n  \"country\": \"...\",\n  \"cargo_value\": 0.0,\n  \"manufacturer\": \"...\"\n}",
+        "hasOutputParser": true,
+        "options": {
+          "passthroughBinaryImages": true
+        }
+      },
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 3.1,
+      "position": [
+        1504,
+        -32
+      ],
+      "id": "7e9adcac-ed4b-4854-8565-f4339458cc5a",
+      "name": "AI Agent"
+    },
+    {
+      "parameters": {
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.lmChatGoogleGemini",
+      "typeVersion": 1,
+      "position": [
+        1488,
+        192
+      ],
+      "id": "f67ad6e7-d97e-4f1f-be27-55fa28cc9ca3",
+      "name": "Google Gemini Chat Model",
+      "credentials": {
+        "googlePalmApi": {
+          "id": "hf78HPjOnGya0r0L",
+          "name": "Google Gemini(PaLM) Api account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsonSchemaExample": "{\n  \"order_number\": \"tekstas\",\n  \"weight\": 0.0,\n  \"volume\": 0.0,\n  \"pickup_address\": \"gatvė, pašto kodas, miestas\",\n  \"country\": \"šalis\",\n  \"cargo_value\": 0.0,\n  \"manufacturer\": \"pavadinimas\",\n  \"comments\": \"tekstas\"\n}"
+      },
+      "type": "@n8n/n8n-nodes-langchain.outputParserStructured",
+      "typeVersion": 1.3,
+      "position": [
+        1632,
+        192
+      ],
+      "id": "6768edae-aba3-4efb-abbd-ba534303a5b4",
+      "name": "Structured Output Parser"
+    },
+    {
+      "parameters": {
+        "operation": "append",
+        "documentId": {
+          "__rl": true,
+          "value": "18OrefK4j2kSvEQ1QLEf167tMbkJENkENOO3GXU947i0",
+          "mode": "list",
+          "cachedResultName": "Krovimo info",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/18OrefK4j2kSvEQ1QLEf167tMbkJENkENOO3GXU947i0/edit?usp=drivesdk"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "gid=0",
+          "mode": "list",
+          "cachedResultName": "Sheet1",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/18OrefK4j2kSvEQ1QLEf167tMbkJENkENOO3GXU947i0/edit#gid=0"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "Data": "={{ $now.format('yyyy-MM-dd') }}",
+            "ID": "={{ $json.output.order_number }}",
+            "Gamintojas": "={{ $json.output.manufacturer }}",
+            "Svoris": "={{ $json.output.weight }}",
+            "Salis": "={{ $json.output.country }}",
+            "adresas": "={{ $json.output.pickup_address }}",
+            "Turis/m^3": "={{ $json.output.volume }}",
+            "Krovinio vertė": "={{ $json.output.cargo_value }}",
+            "Siuntejo komentaras": "={{ $json.output.comments }}",
+            "Siųsti?": "laukia"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "Data",
+              "displayName": "Data",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "ID",
+              "displayName": "ID",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Gamintojas",
+              "displayName": "Gamintojas",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Salis",
+              "displayName": "Salis",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "adresas",
+              "displayName": "adresas",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Svoris",
+              "displayName": "Svoris",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Turis/m^3",
+              "displayName": "Turis/m^3",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Krovinio vertė",
+              "displayName": "Krovinio vertė",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Siuntejo komentaras",
+              "displayName": "Siuntejo komentaras",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "vėžimo kaina/visa kaina",
+              "displayName": "vėžimo kaina/visa kaina",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Vezejas1",
+              "displayName": "Vezejas1",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "vezejas2",
+              "displayName": "vezejas2",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "vezejas3",
+              "displayName": "vezejas3",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "vezejas4",
+              "displayName": "vezejas4",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Siųsti?",
+              "displayName": "Siųsti?",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "vidinis ID",
+              "displayName": "vidinis ID",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        1936,
+        -32
+      ],
+      "id": "7dbe46ff-76da-4350-b2ea-028f8dc77ca4",
+      "name": "Append row in sheet",
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "RYZIdLkMI5MKlsnc",
+          "name": "Google Sheets account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "get",
+        "messageId": "={{ $json.id }}",
+        "simple": false,
+        "options": {
+          "downloadAttachments": true
+        }
+      },
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.2,
+      "position": [
+        448,
+        -256
+      ],
+      "id": "327ee847-d14e-45bb-a3b9-332d06c2528c",
+      "name": "Get a message",
+      "webhookId": "f67270ca-743e-4b6c-acb3-df265648d80d",
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "RGUEvzBH3w56IxDQ",
+          "name": "Gmail account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const allItems = $input.all();\nconst result = [];\n\nfor (const item of allItems) {\n  const binaryData = item.binary;\n  const messageId = item.json.id;\n\n  if (binaryData) {\n    for (const key of Object.keys(binaryData)) {\n      result.push({\n        json: {\n          ...item.json, // ŠITA EILUTĖ IŠSAUGO GAMINTOJO INFO\n          fileName: binaryData[key].fileName,\n          originalMessageId: messageId\n        },\n        binary: {\n          data: binaryData[key]\n        }\n      });\n    }\n  }\n}\n\nreturn result;"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        656,
+        -32
+      ],
+      "id": "e199c979-28d5-4e59-8062-ab933d05fab9",
+      "name": "Code in JavaScript"
+    },
+    {
+      "parameters": {
+        "operation": "pdf",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.extractFromFile",
+      "typeVersion": 1.1,
+      "position": [
+        1072,
+        -32
+      ],
+      "id": "13298f9e-7d6d-4175-98e9-a0aba604c960",
+      "name": "Extract from File"
+    },
+    {
+      "parameters": {
+        "operation": "markAsRead",
+        "messageId": "={{ $('Webhook').first().json.body.id }}"
+      },
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.2,
+      "position": [
+        2144,
+        -32
+      ],
+      "id": "50a4fda6-3329-4251-973c-89489331f17b",
+      "name": "Mark a message as read",
+      "webhookId": "ee76ec66-b892-4b17-ba66-27585da998d1",
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "RGUEvzBH3w56IxDQ",
+          "name": "Gmail account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "fieldsToAggregate": {
+          "fieldToAggregate": [
+            {
+              "fieldToAggregate": "text",
+              "renameField": true,
+              "outputFieldName": "pdf_text"
+            },
+            {
+              "fieldToAggregate": "={{ $node[\"Code in JavaScript2\"].json.Manufacturer }}",
+              "renameField": true,
+              "outputFieldName": "manufacturer_name"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.aggregate",
+      "typeVersion": 1,
+      "position": [
+        1280,
+        -32
+      ],
+      "id": "7b5ae2a1-c362-400a-9e1b-d69f64f6bf71",
+      "name": "Aggregate"
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 3
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $binary.data.fileExtension }}",
+                    "rightValue": "pdf",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    },
+                    "id": "7c7a81b5-944f-48aa-b583-7657d0b48c97"
+                  }
+                ],
+                "combinator": "and"
+              }
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 3
+                },
+                "conditions": [
+                  {
+                    "id": "9fde1c0e-9882-4170-9783-1fb4374c19a7",
+                    "leftValue": "={{ $binary.data.fileExtension }}",
+                    "rightValue": "xlsx",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals",
+                      "name": "filter.operator.equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              }
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.4,
+      "position": [
+        864,
+        -32
+      ],
+      "id": "70016ecc-9bc6-4fbf-b5da-33ee4ce5c2ad",
+      "name": "Switch1"
+    },
+    {
+      "parameters": {
+        "operation": "xlsx",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.extractFromFile",
+      "typeVersion": 1.1,
+      "position": [
+        864,
+        240
+      ],
+      "id": "4fcda357-d7af-4a51-ac8e-bc80d2ea4732",
+      "name": "Extract from File1"
+    },
+    {
+      "parameters": {
+        "jsCode": "const items = $input.all();\nconst text = items.map(row => JSON.stringify(row.json)).join('\\n');\n\n// Paimame gamintojo info iš pirmo elemento ir pridedame Excelio tekstą\nreturn { \n  ...items[0].json, \n  text \n};"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1104,
+        192
+      ],
+      "id": "ddf0ffc8-de4d-4304-82a5-612bea750ad8",
+      "name": "Code in JavaScript1"
+    },
+    {
+      "parameters": {
+        "jsCode": "const items = $input.all();\nconst result = [];\n\n// Praplečiame taisykles, įtraukdami el. pašto raktus\nconst rules = [\n  { key: 'bolia', email: 'bolia.com', name: 'Bolia' },\n  { key: 'saba', email: 'sabaitalia.com', name: 'Saba Italia' },\n  { key: 'eriks', email: 'eriksfeldmanis', name: 'Saba Italia' },\n  { key: 'furninova', email: 'dorota_owl@mail.ru', name: 'Furninova' }\n];\n\nfor (const item of items) {\n  const emailData = item.json.body;\n  \n  if (emailData) {\n    // Naudojame Apps Script siunčiamus laukus: \"tema\" ir \"siuntejas\"\n    const subject = (emailData.tema || \"\").toLowerCase();\n    const from = (emailData.siuntejas || \"\").toLowerCase();\n    \n    // Ieškome gamintojo pagal TEMĄ arba pagal SIUNTĖJO ADRESĄ\n    const manufacturer = rules.find(r => \n      subject.includes(r.key) || from.includes(r.email)\n    );\n    \n    if (manufacturer) {\n      // Tikriname, ar laiškas yra apie paruoštą užsakymą\n      const isReady = subject.includes('ready') || \n                      subject.includes('atsiemimas') || \n                      subject.includes('patvirtinimas') ||\n                      subject.includes('paruosta'); // Pridėjau \"paruosta\" dėl saugumo\n\n      if (isReady) {\n        result.push({\n          json: {\n            ...emailData,\n            Manufacturer: manufacturer.name\n          }\n        });\n      }\n    }\n  }\n}\n\nreturn result;"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        208,
+        -32
+      ],
+      "id": "e09eb22a-a1c5-4378-bac4-00bd7ca8acf8",
+      "name": "Code in JavaScript2"
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "naujas-uzsakymas",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [
+        0,
+        0
+      ],
+      "id": "84431ceb-35a1-4670-ab69-be72e468964e",
+      "name": "Webhook",
+      "webhookId": "16cc80a1-e869-4765-a3d4-720464faf11c"
+    },
+    {
+      "parameters": {
+        "downloadAttachments": true,
+        "options": {}
+      },
+      "type": "n8n-nodes-base.emailReadImap",
+      "typeVersion": 2.1,
+      "position": [
+        416,
+        0
+      ],
+      "id": "89edfcf6-ee0c-4519-bb36-cc5a83d73e02",
+      "name": "Email Trigger (IMAP)",
+      "credentials": {
+        "imap": {
+          "id": "sLydKuYv2LzN0aXI",
+          "name": "IMAP account"
+        }
+      }
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Google Gemini Chat Model": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Structured Output Parser": {
+      "ai_outputParser": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "ai_outputParser",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "AI Agent": {
+      "main": [
+        [
+          {
+            "node": "Append row in sheet",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get a message": {
+      "main": [
+        []
+      ]
+    },
+    "Code in JavaScript": {
+      "main": [
+        [
+          {
+            "node": "Switch1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract from File": {
+      "main": [
+        [
+          {
+            "node": "Aggregate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Append row in sheet": {
+      "main": [
+        [
+          {
+            "node": "Mark a message as read",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Aggregate": {
+      "main": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Switch1": {
+      "main": [
+        [
+          {
+            "node": "Extract from File",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Extract from File1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract from File1": {
+      "main": [
+        [
+          {
+            "node": "Code in JavaScript1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code in JavaScript1": {
+      "main": [
+        [
+          {
+            "node": "Aggregate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code in JavaScript2": {
+      "main": [
+        []
+      ]
+    },
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Code in JavaScript2",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Email Trigger (IMAP)": {
+      "main": [
+        [
+          {
+            "node": "Code in JavaScript",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "availableInMCP": false
+  },
+  "versionId": "36db8ac3-8658-42cf-9b5b-6c62b36e5926",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "69c62c505599bb49c242ec3951588a123390dd889fc08ab6804623392dc47150"
+  },
+  "id": "H-vP_2aisSNmO4I3R_uRh",
+  "tags": []
+}

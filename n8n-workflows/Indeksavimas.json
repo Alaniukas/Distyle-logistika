@@ -1,0 +1,559 @@
+{
+  "name": "Indeksavimas",
+  "nodes": [
+    {
+      "parameters": {
+        "resource": "fileFolder",
+        "searchMethod": "query",
+        "queryString": "='{{ $('loop brands').item.json.id }}' in parents and mimeType contains 'image/' and trashed = false",
+        "returnAll": true,
+        "filter": {},
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleDrive",
+      "typeVersion": 3,
+      "position": [
+        880,
+        0
+      ],
+      "id": "3a1ae0e6-82b8-4a36-881e-e7ff45b03a31",
+      "name": "Search files and folders",
+      "credentials": {
+        "googleDriveOAuth2Api": {
+          "id": "hUozHh3FgXdUZ19p",
+          "name": "Google Drive account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "options": {}
+      },
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [
+        1872,
+        0
+      ],
+      "id": "43bf2661-ac5c-408f-9ac4-8c06063246ed",
+      "name": "Loop Over Items"
+    },
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.noOp",
+      "name": "Replace Me",
+      "typeVersion": 1,
+      "position": [
+        1952,
+        240
+      ],
+      "id": "2d90d84a-9e95-4138-81ac-dad68eb5387b"
+    },
+    {
+      "parameters": {
+        "operation": "download",
+        "fileId": {
+          "__rl": true,
+          "value": "={{ $json.id }}",
+          "mode": "id"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleDrive",
+      "typeVersion": 3,
+      "position": [
+        2080,
+        -96
+      ],
+      "id": "6fb04203-d9ef-4e7c-bdde-1e8b2a5fe532",
+      "name": "Download file",
+      "credentials": {
+        "googleDriveOAuth2Api": {
+          "id": "hUozHh3FgXdUZ19p",
+          "name": "Google Drive account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "resource": "image",
+        "operation": "analyze",
+        "modelId": {
+          "__rl": true,
+          "value": "models/gemini-2.5-flash",
+          "mode": "id"
+        },
+        "text": "=Analizuok šią sofą kaip techninis ekspertas.\nSpalva nesvarbi.\n\nIštrauk technines savybes tiksliai pagal šiuos pasirinkimus:\n- forma: [KAMPINĖ | TIESI | ŠEZLONGAS | U-FORMOS | APVALI]\n- kojeles: [TAIP | NE]. SVARBI INFO APIE KOJELES: Paminėk TAIP Tik jei aiškiai matosi kojelės, kurios pakelia sofą nuo žemės didelį atstumą, o ne minimalų, turi matytis kojelių kontūrai arba jos pačios, jeigu tik sofa pakelta nuo žemės, bet nėra aiškių kojelių silueto tada skaityk, kad kojelių nėra.\n- gylis: [GILI | SEKLI | VIDUTINĖ] (Vertink pagal sėdimos dalies vizualų gylį\n- pagalves: [TAIP | NE] (Ar yra papildomų palaidų pagalvėlių?)\n\nTaip pat sukurk lauką \"aprasymas\": Trumpas, patrauklus tekstas lietuviškai. Pradžioje BŪTINAI pridėk sakinį: \"Spalva gali būti keičiama pagal Jūsų norus.\"\n\nGRĄŽINK TIK JSON:\n{\n  \"forma\": \"...\",\n  \"kojeles\": \"...\",\n  \"gylis\": \"...\",\n  \"pagalves\": \"...\",\n  \"aprasymas\": \"...\"\n}",
+        "inputType": "binary",
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.googleGemini",
+      "typeVersion": 1,
+      "position": [
+        2288,
+        -96
+      ],
+      "id": "53d1d136-3fe4-4852-8b57-7f21011d9114",
+      "name": "Analyze an image",
+      "credentials": {
+        "googlePalmApi": {
+          "id": "cmIcox5FyVqHrtLB",
+          "name": "Google Gemini(PaLM) Api account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://generativelanguage.googleapis.com/v1beta/models/text-embedding-004:embedContent",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "googlePalmApi",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"model\": \"models/text-embedding-004\",\n  \"content\": {\n    \"parts\": [{\n      \"text\": \"{{ $json.content.parts[0].text.replace(/\\n/g, \" \").replace(/\"/g, \"'\") }}\"\n    }]\n  }\n}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2512,
+        -96
+      ],
+      "id": "4b3ababf-ae88-4d06-a119-292930cb0666",
+      "name": "HTTP Request",
+      "credentials": {
+        "googlePalmApi": {
+          "id": "cmIcox5FyVqHrtLB",
+          "name": "Google Gemini(PaLM) Api account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "tableId": "=products",
+        "fieldsUi": {
+          "fieldValues": [
+            {
+              "fieldId": "=brand",
+              "fieldValue": "={{ $json.brand }}"
+            },
+            {
+              "fieldId": "=image_id",
+              "fieldValue": "={{ $json.image_id }}"
+            },
+            {
+              "fieldId": "=description",
+              "fieldValue": "={{ $json.description }}"
+            },
+            {
+              "fieldId": "=embedding",
+              "fieldValue": "={{ $json.embedding }}"
+            },
+            {
+              "fieldId": "pagalves",
+              "fieldValue": "={{ $('Code in JavaScript').item.json.pagalves }}"
+            },
+            {
+              "fieldId": "gylis",
+              "fieldValue": "={{ $json.gylis }}"
+            },
+            {
+              "fieldId": "kojeles",
+              "fieldValue": "={{ $json.kojeles }}"
+            },
+            {
+              "fieldId": "forma",
+              "fieldValue": "={{ $json.forma }}"
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [
+        2944,
+        -96
+      ],
+      "id": "0ac3548b-b698-4053-9f8d-d940032e708a",
+      "name": "Create a row",
+      "credentials": {
+        "supabaseApi": {
+          "id": "tyx9n7NI4nQEhWVO",
+          "name": "Supabase account"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "resource": "fileFolder",
+        "searchMethod": "query",
+        "queryString": "='1agIO86qS1UPyeM4e0WvzeSJ032y83BIa' in parents and mimeType = 'application/vnd.google-apps.folder' and trashed = false",
+        "filter": {},
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleDrive",
+      "typeVersion": 3,
+      "position": [
+        464,
+        0
+      ],
+      "id": "768fe203-e570-48d7-9b3d-4d803d992d98",
+      "name": "Get brands",
+      "credentials": {
+        "googleDriveOAuth2Api": {
+          "id": "hUozHh3FgXdUZ19p",
+          "name": "Google Drive account"
+        }
+      }
+    },
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.noOp",
+      "name": "Replace Me1",
+      "typeVersion": 1,
+      "position": [
+        736,
+        224
+      ],
+      "id": "690dab20-cc5b-4341-8f13-5f803c43caa7"
+    },
+    {
+      "parameters": {
+        "options": {}
+      },
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [
+        672,
+        0
+      ],
+      "id": "45782cdc-d7b3-4a09-abd7-1234ea9da5e5",
+      "name": "loop brands"
+    },
+    {
+      "parameters": {
+        "jsCode": "// 1. Paimame visus elementus (kad žinotume indeksus)\nconst items = $input.all();\n\nreturn items.map((item, index) => {\n  \n  // --- GEMINI DUOMENYS (Tai veikia gerai) ---\n  const visionData = $('Analyze an image').all()[index].json;\n  let rawText = \"{}\";\n  if (visionData.content?.parts?.[0]?.text) {\n       rawText = visionData.content.parts[0].text;\n  }\n  let geminiData = {};\n  try {\n    geminiData = JSON.parse(rawText.replace(/```json|```/g, \"\").trim());\n  } catch (e) { geminiData = {}; }\n\n\n  // --- SVARBUS PATAISYMAS ČIA ---\n  // Mes neimame duomenų iš 'item' (kuris atėjo iš HTTP Request ir yra tuščias).\n  // Mes žiūrime atgal į 'Loop Over Items' mazgą, kuris vis dar saugo originalią info.\n  \n  const originalData = $('Loop Over Items').all()[index].json;\n  \n  const brandName = originalData.brand_name || \"Nežinomas\"; \n  const imageId = originalData.id; \n  // -----------------------------\n\n\n  // --- VEKTORIAI ---\n  let vector = [];\n  try {\n      // Čia imame iš HTTP Request (tai vienintelis dalykas, ką jis grąžina)\n      vector = $('HTTP Request').all()[index].json.embedding.values;\n  } catch(e) { vector = []; }\n\n  // Grąžiname rezultatą\n  return {\n    json: {\n      brand: brandName,\n      image_id: imageId,\n      embedding: vector,\n      forma: geminiData.forma || \"Nenustatyta\",\n      kojeles: geminiData.kojeles || \"Nenustatyta\",\n      gylis: geminiData.gylis_tonas || geminiData.gylis || \"Nenustatyta\",\n      pagalves: geminiData.pagalves || \"Nenustatyta\",\n      description: geminiData.aprasymas || \"Nėra aprašymo\"\n    }\n  };\n});"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2720,
+        -96
+      ],
+      "id": "2b771329-8838-4749-aae8-4604023d586a",
+      "name": "Code in JavaScript"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "7ad73299-c654-4711-b55b-3701bca7ffaa",
+              "name": "brand_name",
+              "value": "={{ $('loop brands').item.json.name }}",
+              "type": "string"
+            }
+          ]
+        },
+        "includeOtherFields": true,
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        1584,
+        0
+      ],
+      "id": "11945838-5125-43df-8e39-8af72f698a63",
+      "name": "Edit Fields"
+    },
+    {
+      "parameters": {
+        "operation": "getAll",
+        "tableId": "products",
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "image_id",
+              "condition": "eq",
+              "keyValue": "={{ $json.id }}"
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [
+        1088,
+        0
+      ],
+      "id": "831be3f3-3de5-4556-94bc-066c52a06680",
+      "name": "Get many rows",
+      "alwaysOutputData": true,
+      "credentials": {
+        "supabaseApi": {
+          "id": "tyx9n7NI4nQEhWVO",
+          "name": "Supabase account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "c4d0cc3b-ef80-4f3c-b197-eee43b4656f0",
+              "leftValue": "={{ $json.image_id }}",
+              "rightValue": "=",
+              "operator": {
+                "type": "string",
+                "operation": "empty",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1296,
+        0
+      ],
+      "id": "b20f0f4e-b405-4a5c-acbb-68858acbb97f",
+      "name": "If"
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "hours"
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.3,
+      "position": [
+        240,
+        0
+      ],
+      "id": "4f58001d-5bcb-421c-98bb-d45d870b782f",
+      "name": "Schedule Trigger"
+    },
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        240,
+        224
+      ],
+      "id": "88e6b2e5-f696-411a-bd2b-53a5a3b0e236",
+      "name": "When clicking ‘Execute workflow’"
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Search files and folders": {
+      "main": [
+        [
+          {
+            "node": "Get many rows",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Loop Over Items": {
+      "main": [
+        [
+          {
+            "node": "Download file",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Replace Me",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Replace Me": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Items",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Download file": {
+      "main": [
+        [
+          {
+            "node": "Analyze an image",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Analyze an image": {
+      "main": [
+        [
+          {
+            "node": "HTTP Request",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP Request": {
+      "main": [
+        [
+          {
+            "node": "Code in JavaScript",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get brands": {
+      "main": [
+        [
+          {
+            "node": "loop brands",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Replace Me1": {
+      "main": [
+        [
+          {
+            "node": "loop brands",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "loop brands": {
+      "main": [
+        [
+          {
+            "node": "Search files and folders",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Replace Me1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code in JavaScript": {
+      "main": [
+        [
+          {
+            "node": "Create a row",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Edit Fields": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Items",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get many rows": {
+      "main": [
+        [
+          {
+            "node": "If",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "If": {
+      "main": [
+        [
+          {
+            "node": "Edit Fields",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Schedule Trigger": {
+      "main": [
+        [
+          {
+            "node": "Get brands",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "When clicking ‘Execute workflow’": {
+      "main": [
+        [
+          {
+            "node": "Get brands",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "853fda5d-aa6c-4525-9164-553d03719ad3",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "6f296ed03aa4b8838c19a564ae53100c6b2a50ddc040052453b13fd0fbf8f368"
+  },
+  "id": "B0xRDLrQZkBtI0SJ",
+  "tags": []
+}

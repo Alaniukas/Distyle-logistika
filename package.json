@@ -1,25 +1,42 @@
 {
-  "name": "web",
+  "name": "logistikos-platforma",
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "dev": "next dev",
+    "dev": "next dev --webpack",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint",
+    "env:setup": "node scripts/setup-env.mjs",
+    "db:generate": "prisma generate",
+    "db:push": "prisma db push",
+    "postinstall": "prisma generate"
   },
   "dependencies": {
+    "@azure/identity": "^4.13.1",
+    "@google/generative-ai": "^0.24.1",
+    "@microsoft/microsoft-graph-client": "^3.0.7",
+    "@prisma/client": "6.19.2",
+    "imapflow": "^1.2.18",
+    "mailparser": "^3.9.6",
+    "mammoth": "^1.12.0",
     "next": "16.2.1",
+    "nodemailer": "^8.0.4",
+    "pdf-parse": "^2.4.5",
     "react": "19.2.4",
-    "react-dom": "19.2.4"
+    "react-dom": "19.2.4",
+    "xlsx": "^0.18.5"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4",
+    "@types/mailparser": "^3.4.6",
     "@types/node": "^20",
+    "@types/nodemailer": "^7.0.11",
     "@types/react": "^19",
     "@types/react-dom": "^19",
     "eslint": "^9",
     "eslint-config-next": "16.2.1",
+    "prisma": "6.19.2",
     "tailwindcss": "^4",
     "typescript": "^5"
   }

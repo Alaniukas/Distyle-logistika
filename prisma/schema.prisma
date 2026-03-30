@@ -1,0 +1,92 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+/// Metų seka TU#20260001 formatui (vienas šaltinis)
+model TuCounter {
+  year Int @id
+  seq  Int
+}
+
+model Order {
+  id              String    @id @default(cuid())
+  internalId      String    @unique
+  status          String    @default("pending_review")
+  manufacturer    String
+  country         String
+  pickupAddress   String
+  weightKg        Float?
+  volumeM3        Float?
+  shipperComment  String    @default("")
+  /// Gamintojo / laiške nurodytos paėmimo nuorodos (užsakymo nr., pickup ref ir pan.) — ne vidinis TU#
+  pickupReference String    @default("")
+  /// Paskutinis sugeneruotas HTML vežėjams (rodyti UI)
+  emailHtml       String?   @db.Text
+  /// Kuris šalies switch šaka (italy | poland | benelux | test)
+  countryRoute    String?
+  sentAt          DateTime?
+  /// manual | imap | graph
+  source          String    @default("manual")
+  /// Originali tema, jei iš pašto
+  emailSubject    String?
+  /// Priedų vardai (JSON masyvas), jei importuota iš pašto
+  attachmentNamesJson String? @db.Text
+  /// „Reikia peržiūros“, jei trūksta svarbių laukų po automatinio parsingo
+  reviewRequired  Boolean   @default(false)
+  reviewNotes     String?   @db.Text
+  pickupReadyDate DateTime?
+  cargoValue      Float?
+  sourceFromEmail String?
+  threadId        String?
+  conversationId  String?
+  parsedConfidence Float?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  offers        CarrierOffer[]
+  ingestedMail  IngestedMail?
+}
+
+/// Kad tas pats laiškas nebūtų apdorotas du kartus (Message-ID arba IMAP uid)
+model IngestedMail {
+  ingestKey String @id
+  orderId   String @unique
+  order     Order  @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
+}
+
+/// Vežėjo atsakymas / pasiūlymas
+model CarrierOffer {
+  id             String   @id @default(cuid())
+  orderId        String
+  order          Order    @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  carrierEmail   String
+  bodyText       String   @db.Text
+  /// Iš AI ar rankinio įvedimo
+  priceEur       Float?
+  termText       String?
+  termDays       Float?
+  vatNote        String?
+  /// manual | email
+  source         String   @default("manual")
+  /// Graph laiško id (deduplikacija)
+  graphMessageId String?  @unique
+  replySubject   String?
+  /// thread | tu | sender | manual
+  matchMethod    String?
+  createdAt      DateTime @default(now())
+}
+
+/// Leidžiami gamintojų siuntėjai (whitelist pagal From)
+model AllowedSender {
+  email     String   @id
+  isActive  Boolean  @default(true)
+  note      String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}

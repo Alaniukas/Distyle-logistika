@@ -1,0 +1,367 @@
+{
+  "name": "Vėžėjai",
+  "nodes": [
+    {
+      "parameters": {
+        "promptType": "=define",
+        "text": "=Esi logistikos vadybininkas vardu Tomas. Paruošk oficialią pervežimo užklausą vežėjams, būtinai pasisveikink, nerašyk per kiek laiko norima gauti, nebent tai nurodyta komentaruose. \n\nLAIŠKO STRUKTŪRA:\nTemos nenurodinėk, kadangi ji jau nurodyta prieš tai.\nPasisveikink bendriniai, nes neaišku, kam siunčiame, tiesiog \"Sveiki, prašome pateikti pasiūlymą pervežimui:\"\n\nKrovos duomenys: \n\nPakrovimo adresas: {{ $json.body.adresas }}\n\nSvoris: {{ $json.body.Svoris }} kg\n\nTūris: {{ $json.body['Turis/m^3'] }} m3\n\nKita svarbi info: {{ $json.body['Siuntejo komentaras'] }}\n\nPasikrovimo numeris: {{ $json.body.ID }}\n\nPaprašyk, kad nurodydami kainą vežėjai būtinai patikslintų, ar kaina yra su PVM, ar be PVM. Taip pat paprašyk nurodyti terminus.\n\nŠITĄ BŪTINAI PRIDĖK gale, po kainos prašymu:\n\nPristatymo adresas:\n\nUAB ExpoDesign (sąskaita ant UAB ExpoDesign)\n\nPanerių g. 56\n\nVilnius, LT-03202\n\nLithuania\n\nAntanas +370 640 40441\n\nI-V – 8:00 – 16:00 val.\n\n(Pagal nutylėjimą – krovinius pristatyti/paimti į sandėlį su liftine mašina)\n\nPrieš atvykstant, būtinai pasiskambinkite sandėlio vadovui Antanui 8 640 40441 (bent jau valandą prieš atvykstant) , kadangi jis nebūna ten pastoviai.\n\n \n\nIš anksto dėkoju\n\nSisteminė pastaba (BŪTINA): Laiško pabaigoje pridėk šį tekstą: „SVARBU: Tai yra automatinė užklausų sistema. Prašome atsakyti tiesiogiai į šį laišką. Jei nuspręsite rašyti naują laišką, temos lauke privalote nurodyti užsakymo numerį skliausteliuose, esantį šio laiško pavadinime.“\n\nRašyk mandagiai, lietuvių kalba, be nereikalingų įžangų.\nSvarbu: viską formatuok gražiai email formatu, be jokių žvaigždučių ar perteklinių kabučių",
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 3.1,
+      "position": [
+        416,
+        0
+      ],
+      "id": "6c01037e-89aa-451c-893e-8faf780e265c",
+      "name": "AI Agent"
+    },
+    {
+      "parameters": {
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.lmChatGoogleGemini",
+      "typeVersion": 1,
+      "position": [
+        288,
+        208
+      ],
+      "id": "c760ae62-8b05-4aed-9339-7dbd8bb0cf1f",
+      "name": "Google Gemini Chat Model",
+      "credentials": {
+        "googlePalmApi": {
+          "id": "hf78HPjOnGya0r0L",
+          "name": "Google Gemini(PaLM) Api account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "for (const item of $input.all()) {\n  let text = item.json.output;\n  \n  // Konvertuojame Markdown į HTML\n  let html = text\n    .replace(/\\*\\*(.*?)\\*\\*/g, '<b>$1</b>') // Pakeičia **tekstas** į <b>tekstas</b>\n    .replace(/\\n/g, '<br>');               // Pakeičia naujas eilutes į <br> žymas\n\n  item.json.html_body = html;\n}\n\nreturn $input.all();"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        768,
+        0
+      ],
+      "id": "12d5b6e1-9ed9-4923-96b9-cfe4713296a1",
+      "name": "Code in JavaScript"
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "siusti-laiska",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [
+        160,
+        0
+      ],
+      "id": "33eef606-71b2-4bda-a51a-ae6529b0b34c",
+      "name": "Webhook",
+      "webhookId": "67b428e2-8a85-4d83-9bda-2ae3daeaac26"
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 3
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.output.country.toLowerCase() }}",
+                    "rightValue": "ital",
+                    "operator": {
+                      "type": "string",
+                      "operation": "contains"
+                    },
+                    "id": "2d88f80f-6ab5-4fa5-b22f-858318581476"
+                  }
+                ],
+                "combinator": "and"
+              }
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 3
+                },
+                "conditions": [
+                  {
+                    "id": "9ca1e43c-8114-4883-bd96-8ad413c5cb7f",
+                    "leftValue": "={{ $json.output.country.toLowerCase() }}",
+                    "rightValue": "lenk\npola",
+                    "operator": {
+                      "type": "string",
+                      "operation": "regex"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              }
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 3
+                },
+                "conditions": [
+                  {
+                    "id": "6cccd500-29b8-4106-b607-1edcbbc31284",
+                    "leftValue": "={{ $json.output.country.toLowerCase() }}",
+                    "rightValue": "nyde\nneth",
+                    "operator": {
+                      "type": "string",
+                      "operation": "regex"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              }
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 3
+                },
+                "conditions": [
+                  {
+                    "id": "20a619db-ed6f-4d76-8300-05585f42a531",
+                    "leftValue": "={{ $json.output.country.toLowerCase() }}",
+                    "rightValue": "test",
+                    "operator": {
+                      "type": "string",
+                      "operation": "regex"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              }
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.4,
+      "position": [
+        1024,
+        0
+      ],
+      "id": "a85d8827-a63d-4fd0-85f4-0854ffbf98ea",
+      "name": "Switch"
+    },
+    {
+      "parameters": {
+        "fromEmail": "alanas@soci.lt",
+        "toEmail": "orders@digroup.lt",
+        "subject": "=Pervežimo paslaugai {{ $('Webhook').item.json.body.Salis }} ({{ $('Webhook').item.json.body.Gamintojas }}) – Lietuva, ID: {{ $('Webhook').item.json.body['vidinis ID'] }}",
+        "html": "={{ $json.html_body }}",
+        "options": {
+          "bccEmail": "asta.gudiskiene@axistransport.lt; darius.karaliunas@kuehne-nagel.com; italy@easting.lt; urte.meskauskaite@gevara.lt; italy@gevara.lt; jurgita.korolioviene@dhl.com; lukas@cargobooking.lt"
+        }
+      },
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 2.1,
+      "position": [
+        1232,
+        -208
+      ],
+      "id": "d15e5f57-9fd7-46ad-a2fc-e6aaab28ce2d",
+      "name": "Send an Email",
+      "webhookId": "8eb415b0-d345-41b3-bbd2-c2cafffde919",
+      "credentials": {
+        "smtp": {
+          "id": "WL3RPbAGT1wh4qES",
+          "name": "SMTP account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "fromEmail": "alanas@soci.lt",
+        "toEmail": "orders@digroup.lt",
+        "subject": "=Pervežimo paslaugai {{ $('Webhook').item.json.body.Salis }} ({{ $('Webhook').item.json.body.Gamintojas }}) – Lietuva, ID: {{ $('Webhook').item.json.body['vidinis ID'] }}",
+        "html": "={{ $json.html_body }}",
+        "options": {
+          "bccEmail": "asta.gudiskiene@axistransport.lt; Edita.Kubiliute@hellmann.com; urte.meskauskaite@gevara.lt; jurgita.korolioviene@dhl.com; mantas.andriukaitis@rhenus.com; poland@easting.lt; poland@gevara.lt"
+        }
+      },
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 2.1,
+      "position": [
+        1232,
+        -96
+      ],
+      "id": "0a86dc3d-1fca-4709-96b8-e6bcf5afe962",
+      "name": "Send an Email1",
+      "webhookId": "24015eb9-4f1e-411b-9edc-f94608e0927d",
+      "credentials": {
+        "smtp": {
+          "id": "WL3RPbAGT1wh4qES",
+          "name": "SMTP account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "fromEmail": "alanas@soci.lt",
+        "toEmail": "orders@digroup.lt",
+        "subject": "=Pervežimo paslaugai {{ $('Webhook').item.json.body.Salis }} ({{ $('Webhook').item.json.body.Gamintojas }}) – Lietuva, ID: {{ $('Webhook').item.json.body['vidinis ID'] }}",
+        "html": "={{ $json.html_body }}",
+        "options": {
+          "bccEmail": "ami@ntglithuania.lt; asta.gudiskiene@axistransport.lt; gstrazdas@bsc.lt; elvyra.ronkaitiene@easting.lt; urte.meskauskaite@gevara.lt; sales@gevara.lt; iba@ntglithuania.lt; jurgita.korolioviene@dhl.com"
+        }
+      },
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 2.1,
+      "position": [
+        1232,
+        32
+      ],
+      "id": "71b615a2-7494-4f6f-93b6-60f4e322b24e",
+      "name": "Send an Email2",
+      "webhookId": "24015eb9-4f1e-411b-9edc-f94608e0927d",
+      "credentials": {
+        "smtp": {
+          "id": "WL3RPbAGT1wh4qES",
+          "name": "SMTP account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "fromEmail": "alanas@soci.lt",
+        "toEmail": "alaniukasa@gmail.com",
+        "subject": "=Pervežimo paslaugai {{ $('Webhook').item.json.body.Salis }} ({{ $('Webhook').item.json.body.Gamintojas }}) – Lietuva, ID: {{ $('Webhook').item.json.body['vidinis ID'] }}",
+        "html": "={{ $json.html_body }}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 2.1,
+      "position": [
+        1232,
+        176
+      ],
+      "id": "641f6ac7-725b-4bdf-81ad-b3f5e6a94e73",
+      "name": "Send an Email3",
+      "webhookId": "24015eb9-4f1e-411b-9edc-f94608e0927d",
+      "credentials": {
+        "smtp": {
+          "id": "WL3RPbAGT1wh4qES",
+          "name": "SMTP account"
+        }
+      }
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Google Gemini Chat Model": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "AI Agent": {
+      "main": [
+        [
+          {
+            "node": "Code in JavaScript",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code in JavaScript": {
+      "main": [
+        [
+          {
+            "node": "Switch",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Switch": {
+      "main": [
+        [
+          {
+            "node": "Send an Email",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Send an Email1",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Send an Email2",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Send an Email3",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "availableInMCP": false
+  },
+  "versionId": "5e4e4101-6426-4122-bbb2-082163abeb88",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "69c62c505599bb49c242ec3951588a123390dd889fc08ab6804623392dc47150"
+  },
+  "id": "YWNWMnDjv-3dtt34UO-jt",
+  "tags": []
+}
