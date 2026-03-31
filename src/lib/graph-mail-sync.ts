@@ -15,6 +15,7 @@ import {
   mailSubjectFilterFromEnv,
   subjectMatchesOptionalFilter,
 } from "@/lib/inbound-mail-rules";
+import { classifyMailPickupIntent } from "@/lib/mail-pickup-intent";
 import { prisma } from "@/lib/prisma";
 import { isAllowedSender } from "@/lib/sender-whitelist";
 import { allocateNextInternalId } from "@/lib/tu-number";
@@ -224,6 +225,17 @@ export async function syncInboxFromGraph(): Promise<SyncMailResult> {
     if (!allowed) {
       skipped += 1;
       details.push(`${item.id}: siuntėjas ne whitelist'e (${fromAddr})`);
+      continue;
+    }
+
+    const intent = await classifyMailPickupIntent({
+      subject,
+      bodyText: textBody,
+      attachmentNames: attachments.map((a) => a.name).filter((n): n is string => Boolean(n?.trim())),
+    });
+    if (!intent.importOrder) {
+      skipped += 1;
+      details.push(`${item.id}: DI paėmimo filtras — neimportuojama (${intent.reason})`);
       continue;
     }
 

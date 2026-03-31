@@ -7,6 +7,7 @@ import {
   subjectMatchesOptionalFilter,
 } from "@/lib/inbound-mail-rules";
 import { mailTlsOptions } from "@/lib/mail-tls";
+import { classifyMailPickupIntent } from "@/lib/mail-pickup-intent";
 import { prisma } from "@/lib/prisma";
 import { isAllowedSender } from "@/lib/sender-whitelist";
 import { allocateNextInternalId } from "@/lib/tu-number";
@@ -117,6 +118,20 @@ export async function syncInboxFromImap(): Promise<SyncMailResult> {
         }
 
         const textBody = (parsed.text || "").trim() || "(tuščias tekstas)";
+        const attNames = (parsed.attachments ?? [])
+          .map((a) => a.filename || a.contentId || "")
+          .filter(Boolean);
+        const intent = await classifyMailPickupIntent({
+          subject,
+          bodyText: textBody,
+          attachmentNames: attNames as string[],
+        });
+        if (!intent.importOrder) {
+          skipped += 1;
+          details.push(`UID ${uid}: DI paėmimo filtras — neimportuojama (${intent.reason})`);
+          continue;
+        }
+
         const firstLine =
           textBody.split(/\r?\n/).find((l) => l.trim().length > 0)?.trim() ||
           "Adresas laiške";
