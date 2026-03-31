@@ -24,9 +24,16 @@ export async function getAllowedSenders(): Promise<Set<string>> {
   return new Set(envList);
 }
 
+/**
+ * Tuščias whitelist = niekas nepraeina (saugiau produkcijai).
+ * Seną elgesį „visi leidžiami, jei sąrašas tuščias“ įjungia tik
+ * MAIL_ALLOW_ALL_WHEN_WHITELIST_EMPTY=true (tik dev/test).
+ */
 export async function isAllowedSender(email: string): Promise<boolean> {
   const allowed = await getAllowedSenders();
-  if (allowed.size === 0) return true;
+  if (allowed.size === 0) {
+    return process.env.MAIL_ALLOW_ALL_WHEN_WHITELIST_EMPTY === "true";
+  }
   return allowed.has(normalize(email));
 }
 
