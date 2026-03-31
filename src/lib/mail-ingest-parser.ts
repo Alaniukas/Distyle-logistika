@@ -1,3 +1,4 @@
+import "@/lib/node-dom-polyfills";
 import mammoth from "mammoth";
 import { PDFParse } from "pdf-parse";
 import * as XLSX from "xlsx";
