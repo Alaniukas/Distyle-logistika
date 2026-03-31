@@ -220,7 +220,7 @@ export async function syncInboxFromGraph(): Promise<SyncMailResult> {
       fromField?.emailAddress?.name ||
       "nežinomas@siuntėjas.lt";
     const fromName = fromField?.emailAddress?.name || fromAddr;
-    const allowed = await isAllowedSender(fromAddr);
+    const allowed = await isAllowedSender(fromAddr, subject);
     if (!allowed) {
       skipped += 1;
       details.push(`${item.id}: siuntėjas ne whitelist'e (${fromAddr})`);

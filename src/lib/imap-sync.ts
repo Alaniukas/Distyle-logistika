@@ -109,7 +109,7 @@ export async function syncInboxFromImap(): Promise<SyncMailResult> {
           "nežinomas@siuntėjas.lt";
         const fromName = parsed.from?.value[0]?.name || fromAddr;
 
-        const allowed = await isAllowedSender(fromAddr);
+        const allowed = await isAllowedSender(fromAddr, subject);
         if (!allowed) {
           skipped += 1;
           details.push(`UID ${uid}: siuntėjas ne whitelist'e (${fromAddr})`);
