@@ -1,9 +1,12 @@
 {
-  "_readme": "Sinchronizuokite su n8n-workflows/Gamintojai.json (Code in JavaScript2 → rules). key = temos fragmentas, email = siuntėjo adreso fragmentas (kaip n8n from.includes).",
+  "_readme": "Sinchronizuokite su n8n. key = temos fragmentas, email = From fragmentas. Saba: sabaitalia — aptinka ir .com ir .it.",
   "rules": [
     { "key": "bolia", "email": "bolia.com", "name": "Bolia", "countryHint": "Nyderlandai" },
-    { "key": "saba", "email": "sabaitalia.com", "name": "Saba Italia", "countryHint": "Italija" },
-    { "key": "eriks", "email": "eriksfeldmanis", "name": "Saba Italia", "countryHint": "Italija" },
-    { "key": "furninova", "email": "dorota_owl@mail.ru", "name": "Furninova", "countryHint": "Lenkija" }
+    { "key": "saba", "email": "sabaitalia", "name": "Saba Italia", "countryHint": "Italija" },
+    { "key": "eriks", "email": "eriksfeldmanis", "name": "Saba (per tarpininką)", "countryHint": "Italija" },
+    { "key": "furninova", "email": "dorota_owl@mail.ru", "name": "Furninova", "countryHint": "Lenkija" },
+    { "key": "furninova", "email": "dorota_swyd", "name": "Furninova", "countryHint": "Lenkija" },
+    { "key": "furninova", "email": "mti-furninova", "name": "Furninova", "countryHint": "Lenkija" },
+    { "key": "furninova", "email": "mtl.fuminova", "name": "Furninova", "countryHint": "Lenkija" }
   ]
 }

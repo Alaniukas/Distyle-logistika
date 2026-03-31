@@ -1,8 +1,32 @@
 import { prisma } from "@/lib/prisma";
-import { matchesN8nManufacturerRules } from "@/lib/manufacturer-inbound-rules";
+import {
+  matchesManufacturerRuleByFromOnly,
+  matchesN8nManufacturerRules,
+} from "@/lib/manufacturer-inbound-rules";
 
 function normalize(email: string): string {
   return email.trim().toLowerCase();
+}
+
+/** Domenai (kableliais), kuriems neleidžiama „tik pagal temą“ — reikia atitikimo From pagal manufacturer-inbound-rules. */
+function blockedImportDomains(): string[] {
+  const raw =
+    process.env.MAIL_IMPORT_BLOCK_FROM_DOMAINS ??
+    "distyle.lt";
+  return raw
+    .split(",")
+    .map((s) => s.trim().toLowerCase())
+    .filter(Boolean);
+}
+
+function senderDomainIsBlockedForSubjectOnlyMatch(fromAddress: string): boolean {
+  const at = fromAddress.lastIndexOf("@");
+  if (at < 0) return false;
+  const domain = fromAddress.slice(at + 1).toLowerCase();
+  for (const b of blockedImportDomains()) {
+    if (domain === b || domain.endsWith(`.${b}`)) return true;
+  }
+  return false;
 }
 
 /**
@@ -33,7 +57,15 @@ export async function getAllowedSenders(): Promise<Set<string>> {
  */
 export async function isAllowedSender(email: string, subject?: string): Promise<boolean> {
   const subj = subject ?? "";
-  if (matchesN8nManufacturerRules(email, subj)) return true;
+  if (matchesN8nManufacturerRules(email, subj)) {
+    if (
+      senderDomainIsBlockedForSubjectOnlyMatch(email) &&
+      !matchesManufacturerRuleByFromOnly(email)
+    ) {
+      return false;
+    }
+    return true;
+  }
 
   const allowed = await getAllowedSenders();
   if (allowed.size === 0) {

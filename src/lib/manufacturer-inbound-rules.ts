@@ -24,3 +24,13 @@ export function matchesN8nManufacturerRules(fromAddress: string, subject: string
   }
   return false;
 }
+
+/** Tik jei bent viena taisyklė pataikė į From (ne į temą). Naudinga blokuoti „tema=tik raktas“ vidiniams siuntėjams. */
+export function matchesManufacturerRuleByFromOnly(fromAddress: string): boolean {
+  const f = fromAddress.toLowerCase();
+  for (const r of rules) {
+    const email = r.email?.trim().toLowerCase();
+    if (email && f.includes(email)) return true;
+  }
+  return false;
+}
