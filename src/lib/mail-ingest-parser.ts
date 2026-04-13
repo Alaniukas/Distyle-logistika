@@ -1,5 +1,7 @@
 import "@/lib/node-dom-polyfills";
 import mammoth from "mammoth";
+// pdf-parse v2 rekomenduoja importuoti worker prieš pagrindinį modulį (polyfill/CanvasFactory).
+import { CanvasFactory } from "pdf-parse/worker";
 import { PDFParse } from "pdf-parse";
 import * as XLSX from "xlsx";
 import { GoogleGenerativeAI } from "@google/generative-ai";
@@ -89,11 +91,16 @@ function stripHtml(html: string): string {
 
 async function parsePdf(buffer: Buffer): Promise<string> {
   try {
-    const parser = new PDFParse({ data: new Uint8Array(buffer) });
+    const parser = new PDFParse({ data: new Uint8Array(buffer), CanvasFactory });
     const textResult = await parser.getText();
     await parser.destroy();
     return textResult.text?.trim() || "";
-  } catch {
+  } catch (e) {
+    if (process.env.MAIL_PDF_DEBUG === "true") {
+      const msg = e instanceof Error ? e.message : String(e);
+      // eslint-disable-next-line no-console
+      console.warn("parsePdf failed:", msg);
+    }
     return "";
   }
 }
