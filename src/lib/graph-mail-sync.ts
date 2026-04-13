@@ -185,12 +185,11 @@ export async function syncInboxFromGraph(): Promise<SyncMailResult> {
         })
       : null;
 
-    // Jei tai reply ir turim jau užsakymą toje pačioje gijoje — atnaujinam (ne praleidžiam).
-    // Jei reply, bet nėra užsakymo — praleidžiam (nenorim kurti naujų iš atsakymų).
+    // Jei tai reply ir turim jau užsakymą toje pačioje gijoje — vėliau atnaujinsim (ne praleidžiam).
+    // Jei reply, bet nėra užsakymo — LEIDŽIAM sukurti naują, jei praeina whitelist + DI.
+    // Taip neprarandam svarbių gamintojo reply (pvz. „ready for pickup“) net jei pradinio laiško neimportavom.
     if (isReply && !existingThreadOrder) {
-      skipped += 1;
-      details.push(`${item.id}: atsakymas (RE / In-Reply-To) — praleidžiama (nėra gijos užsakymo)`);
-      continue;
+      details.push(`${item.id}: atsakymas (RE / In-Reply-To) — gijos užsakymo nėra, bandysim kurti naują iš reply`);
     }
     // Jei nėra reply, bet gijoje jau yra užsakymas — saugom nuo dublikatų.
     if (!isReply && existingThreadOrder) {
