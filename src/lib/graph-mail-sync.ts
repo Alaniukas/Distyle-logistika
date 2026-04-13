@@ -164,26 +164,38 @@ export async function syncInboxFromGraph(): Promise<SyncMailResult> {
       typeof (full as { conversationId?: string }).conversationId === "string"
         ? (full as { conversationId: string }).conversationId
         : null;
-    if (convId) {
-      const threadOrder = await prisma.order.findFirst({
-        where: { conversationId: convId },
-        select: { id: true },
-      });
-      if (threadOrder) {
-        skipped += 1;
-        details.push(`${item.id}: atsakymas / ta pati gija — užsakymas jau sukurtas`);
-        continue;
-      }
-    }
 
     const imh = (full as { internetMessageHeaders?: { name?: string; value?: string }[] })
       .internetMessageHeaders;
-    if (
-      isLikelyReplySubject(subject) ||
-      hasInReplyToFromGraphHeaders(imh)
-    ) {
+    const isReply = isLikelyReplySubject(subject) || hasInReplyToFromGraphHeaders(imh);
+
+    const existingThreadOrder = convId
+      ? await prisma.order.findFirst({
+          where: { conversationId: convId },
+          select: {
+            id: true,
+            internalId: true,
+            manufacturer: true,
+            country: true,
+            pickupAddress: true,
+            pickupReference: true,
+            shipperComment: true,
+            attachmentNamesJson: true,
+          },
+        })
+      : null;
+
+    // Jei tai reply ir turim jau užsakymą toje pačioje gijoje — atnaujinam (ne praleidžiam).
+    // Jei reply, bet nėra užsakymo — praleidžiam (nenorim kurti naujų iš atsakymų).
+    if (isReply && !existingThreadOrder) {
       skipped += 1;
-      details.push(`${item.id}: atsakymas (RE / In-Reply-To) — praleidžiama`);
+      details.push(`${item.id}: atsakymas (RE / In-Reply-To) — praleidžiama (nėra gijos užsakymo)`);
+      continue;
+    }
+    // Jei nėra reply, bet gijoje jau yra užsakymas — saugom nuo dublikatų.
+    if (!isReply && existingThreadOrder) {
+      skipped += 1;
+      details.push(`${item.id}: ta pati gija — užsakymas jau sukurtas (${existingThreadOrder.internalId})`);
       continue;
     }
 
@@ -266,35 +278,70 @@ export async function syncInboxFromGraph(): Promise<SyncMailResult> {
 
     const internalId = await allocateNextInternalId();
 
-    const order = await prisma.order.create({
-      data: {
-        internalId,
-        manufacturer: (parsed.manufacturer ?? fromName).slice(0, 200),
-        country: (
-          (parsed.country ?? "").trim() ||
-          countryLabelFromRoute(inferRouteFromSubject(subject)) ||
-          "Patikrinkite laiške"
-        ).slice(0, 120),
-        pickupAddress: (parsed.pickupAddress ?? "Adresas laiške").slice(0, 500),
-        weightKg: parsed.weightKg,
-        volumeM3: parsed.volumeM3,
-        cargoValue: parsed.cargoValue,
-        shipperComment: parsed.shipperComment,
-        pickupReference: (parsed.pickupReference ?? "").slice(0, 2000),
-        source: "graph",
-        sourceFromEmail: fromAddr.slice(0, 320),
-        emailSubject: subject.slice(0, 500),
-        attachmentNamesJson: attachmentNames,
-        reviewRequired: parsed.reviewRequired || Boolean(extraReview),
-        reviewNotes: mergedNotes,
-        parsedConfidence: parsed.parsedConfidence,
-        conversationId:
-          typeof (full as { conversationId?: string }).conversationId === "string"
-            ? (full as { conversationId?: string }).conversationId
-            : null,
-        status: "pending_review",
-      },
-    });
+    const appendBlock = [
+      "",
+      `---`,
+      `Papildymas iš atsakymo (Graph ${item.id})`,
+      `Tema: ${subject}`,
+      `Nuo: ${fromAddr}`,
+      `---`,
+      parsed.shipperComment,
+    ]
+      .filter(Boolean)
+      .join("\n");
+
+    const order = existingThreadOrder
+      ? await prisma.order.update({
+          where: { id: existingThreadOrder.id },
+          data: {
+            // Atnaujinam tik jei naujas parsingas turi kažką naudingo; nesugadinam jau suvestų laukų.
+            manufacturer: (parsed.manufacturer ?? existingThreadOrder.manufacturer).slice(0, 200),
+            country: (parsed.country ?? existingThreadOrder.country).slice(0, 120),
+            pickupAddress: (parsed.pickupAddress ?? existingThreadOrder.pickupAddress).slice(0, 500),
+            pickupReference: (
+              (typeof parsed.pickupReference === "string" && parsed.pickupReference.trim()
+                ? parsed.pickupReference
+                : existingThreadOrder.pickupReference) ?? ""
+            ).slice(0, 2000),
+            weightKg: parsed.weightKg ?? undefined,
+            volumeM3: parsed.volumeM3 ?? undefined,
+            cargoValue: parsed.cargoValue ?? undefined,
+            shipperComment: (existingThreadOrder.shipperComment + appendBlock).slice(0, 50000),
+            sourceFromEmail: fromAddr.slice(0, 320),
+            emailSubject: subject.slice(0, 500),
+            attachmentNamesJson: attachmentNames ?? existingThreadOrder.attachmentNamesJson,
+            reviewRequired: parsed.reviewRequired || Boolean(extraReview),
+            reviewNotes: mergedNotes,
+            parsedConfidence: parsed.parsedConfidence,
+            status: "pending_review",
+          },
+        })
+      : await prisma.order.create({
+          data: {
+            internalId,
+            manufacturer: (parsed.manufacturer ?? fromName).slice(0, 200),
+            country: (
+              (parsed.country ?? "").trim() ||
+              countryLabelFromRoute(inferRouteFromSubject(subject)) ||
+              "Patikrinkite laiške"
+            ).slice(0, 120),
+            pickupAddress: (parsed.pickupAddress ?? "Adresas laiške").slice(0, 500),
+            weightKg: parsed.weightKg,
+            volumeM3: parsed.volumeM3,
+            cargoValue: parsed.cargoValue,
+            shipperComment: parsed.shipperComment,
+            pickupReference: (parsed.pickupReference ?? "").slice(0, 2000),
+            source: "graph",
+            sourceFromEmail: fromAddr.slice(0, 320),
+            emailSubject: subject.slice(0, 500),
+            attachmentNamesJson: attachmentNames,
+            reviewRequired: parsed.reviewRequired || Boolean(extraReview),
+            reviewNotes: mergedNotes,
+            parsedConfidence: parsed.parsedConfidence,
+            conversationId: convId,
+            status: "pending_review",
+          },
+        });
 
     await prisma.ingestedMail.create({
       data: {
@@ -311,7 +358,9 @@ export async function syncInboxFromGraph(): Promise<SyncMailResult> {
 
     created += 1;
     details.push(
-      `Sukurta ${order.internalId} iš Graph ${item.id} (${subject})${parsed.reviewRequired ? " [reikia peržiūros]" : ""}`,
+      `${existingThreadOrder ? "Atnaujinta" : "Sukurta"} ${order.internalId} iš Graph ${item.id} (${subject})${
+        parsed.reviewRequired ? " [reikia peržiūros]" : ""
+      }`,
     );
   }
 

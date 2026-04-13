@@ -50,13 +50,13 @@ model Order {
   updatedAt       DateTime  @updatedAt
 
   offers        CarrierOffer[]
-  ingestedMail  IngestedMail?
+  ingestedMails IngestedMail[]
 }
 
 /// Kad tas pats laiškas nebūtų apdorotas du kartus (Message-ID arba IMAP uid)
 model IngestedMail {
   ingestKey String @id
-  orderId   String @unique
+  orderId   String
   order     Order  @relation(fields: [orderId], references: [id], onDelete: Cascade)
   createdAt DateTime @default(now())
 }
