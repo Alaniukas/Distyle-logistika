@@ -12,6 +12,7 @@ const nextConfig: NextConfig = {
     "mailparser",
     "nodemailer",
     "@azure/identity",
+    "@napi-rs/canvas",
     // pdf-parse → pdfjs-dist: bundlintas Webpack sugadina pdf.mjs (__webpack_require__.r ant ne objekto)
     "pdf-parse",
     "pdfjs-dist",
