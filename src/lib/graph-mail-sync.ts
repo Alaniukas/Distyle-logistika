@@ -108,6 +108,7 @@ export async function syncInboxFromGraph(): Promise<SyncMailResult> {
   // Tuščia MAIL_SUBJECT_FILTER = papildomo temos filtro nėra (tik whitelist siuntėjai).
   const subjectFilter = mailSubjectFilterFromEnv();
   const markSeen = process.env.MAIL_MARK_SEEN === "true";
+  const syncMode = (process.env.MAIL_GRAPH_SYNC_MODE ?? "unread").trim().toLowerCase();
   const mailbox = graphMailboxUser();
   const client = await getGraphClient();
 
@@ -115,13 +116,21 @@ export async function syncInboxFromGraph(): Promise<SyncMailResult> {
   let created = 0;
   let skipped = 0;
 
-  const list = await client
+  let listReq = client
     .api(`/users/${encodeURIComponent(mailbox)}/mailFolders/inbox/messages`)
-    .filter("isRead eq false")
-    .orderby("receivedDateTime asc")
     .top(50)
-    .select("id,subject,internetMessageId,bodyPreview")
-    .get();
+    .select("id,subject,internetMessageId,bodyPreview");
+  if (syncMode === "recent") {
+    // Paskutiniai 50 (įskaitant perskaitytus), naujausi pirmi.
+    listReq = listReq.orderby("receivedDateTime desc");
+    details.push("Graph sync režimas: recent (paskutiniai 50, read+unread).");
+  } else {
+    // Numatytai: tik neperskaityti, seniausi pirmi.
+    listReq = listReq.filter("isRead eq false").orderby("receivedDateTime asc");
+    details.push("Graph sync režimas: unread (tik neperskaityti).");
+  }
+
+  const list = await listReq.get();
 
   const items: GraphMessageListItem[] = list.value ?? [];
   if (items.length === 0) {
