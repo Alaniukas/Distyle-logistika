@@ -7,6 +7,7 @@ import {
   extractAttachmentTexts,
   normalizeBodyText,
   parseOrderFromMailSources,
+  trimQuotedMailHistory,
   type GraphAttachment,
 } from "@/lib/mail-ingest-parser";
 import {
@@ -223,7 +224,7 @@ export async function syncInboxFromGraph(): Promise<SyncMailResult> {
     if (!textBody && full.bodyPreview) {
       textBody = full.bodyPreview.trim();
     }
-    textBody = textBody || "(tuščias tekstas)";
+    textBody = trimQuotedMailHistory(textBody || "(tuščias tekstas)");
 
     const ingestKey = buildIngestKey(full.internetMessageId, full.id);
     const existing = await prisma.ingestedMail.findUnique({

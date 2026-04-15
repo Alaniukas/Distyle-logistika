@@ -6,6 +6,7 @@ import {
   mailSubjectFilterFromEnv,
   subjectMatchesOptionalFilter,
 } from "@/lib/inbound-mail-rules";
+import { trimQuotedMailHistory } from "@/lib/mail-ingest-parser";
 import { mailTlsOptions } from "@/lib/mail-tls";
 import { classifyMailPickupIntent } from "@/lib/mail-pickup-intent";
 import { prisma } from "@/lib/prisma";
@@ -117,7 +118,7 @@ export async function syncInboxFromImap(): Promise<SyncMailResult> {
           continue;
         }
 
-        const textBody = (parsed.text || "").trim() || "(tuščias tekstas)";
+        const textBody = trimQuotedMailHistory((parsed.text || "").trim() || "(tuščias tekstas)");
         const attNames = (parsed.attachments ?? [])
           .map((a) => a.filename || a.contentId || "")
           .filter(Boolean);

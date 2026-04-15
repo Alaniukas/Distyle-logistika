@@ -348,3 +348,33 @@ export function normalizeBodyText(contentType: string | undefined, content: stri
   return content.trim();
 }
 
+const QUOTE_CUT_MARKERS: RegExp[] = [
+  /^\s*-{2,}\s*forwarded message\s*-{2,}\s*$/i,
+  /^\s*from:\s+/i,
+  /^\s*sent:\s+/i,
+  /^\s*to:\s+/i,
+  /^\s*cc:\s+/i,
+  /^\s*subject:\s+/i,
+  /^\s*(da|inviato|oggetto|a):\s+/i,
+  /^\s*(on|w dniu|le|il|el|am)\b.*\b(wrote|schrieb|napisał|ha scritto|ra(?:š|s)ė)\s*:?\s*$/i,
+];
+
+/**
+ * Paima tik „naują“ laiško dalį ir nukerpa cituotas istorijas (reply/forward),
+ * kad AI neimtų senų gijų tekstų kaip naujo užsakymo konteksto.
+ */
+export function trimQuotedMailHistory(text: string): string {
+  const lines = text.replace(/\r/g, "").split("\n");
+  const cleaned: string[] = [];
+  for (const line of lines) {
+    const l = line.trimEnd();
+    if (l.trimStart().startsWith(">")) continue;
+    if (QUOTE_CUT_MARKERS.some((re) => re.test(l))) break;
+    cleaned.push(l);
+  }
+  const joined = cleaned.join("\n").trim();
+  // Jei per agresyviai nukirpome beveik viską, paliekam originalą.
+  if (joined.length >= 80) return joined;
+  return text.trim();
+}
+
