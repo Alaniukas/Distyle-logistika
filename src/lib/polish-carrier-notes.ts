@@ -41,6 +41,7 @@ export async function polishAdditionalNotesForCarriers(
 
 JAU ŽINOMA ATSKIRAI (NEKARTOK ir neįtrauk į atsakymą):
 - Pakrovimo adresas: ${order.pickupAddress}
+- Palečių matmenys: ${order.palletDimensions?.trim() || "—"}
 - Svoris: ${order.weightKg ?? "—"} kg
 - Tūris: ${order.volumeM3 ?? "—"} m³
 - Gamintojo paėmimo/užsakymo nuorodos: ${order.pickupReference?.trim() || "—"}

@@ -1,4 +1,5 @@
 import { confirmationEmailSubject, type OrderForTemplate } from "@/lib/carrier-email-template";
+import { normalizeTrustedText, parseSafeEmail } from "@/lib/input-security";
 import { prisma } from "@/lib/prisma";
 import { sendSingleCarrierEmailHtml } from "@/lib/send-carrier-email";
 import { NextResponse } from "next/server";
@@ -10,6 +11,7 @@ function toTemplate(order: {
   manufacturer: string;
   country: string;
   pickupAddress: string;
+  palletDimensions: string;
   weightKg: number | null;
   volumeM3: number | null;
   shipperComment: string;
@@ -20,6 +22,7 @@ function toTemplate(order: {
     manufacturer: order.manufacturer,
     country: order.country,
     pickupAddress: order.pickupAddress,
+    palletDimensions: order.palletDimensions,
     weightKg: order.weightKg,
     volumeM3: order.volumeM3,
     shipperComment: order.shipperComment,
@@ -38,11 +41,10 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
   }
 
   const body = await req.json().catch(() => null);
-  const carrierEmail = String((body as Record<string, unknown>)?.carrierEmail ?? "").trim();
-  const html = String((body as Record<string, unknown>)?.html ?? "").trim();
-  const subject =
-    String((body as Record<string, unknown>)?.subject ?? "").trim() ||
-    confirmationEmailSubject(toTemplate(order));
+  const carrierEmail = parseSafeEmail((body as Record<string, unknown>)?.carrierEmail);
+  const html = normalizeTrustedText((body as Record<string, unknown>)?.html, 200_000);
+  const subjectIn = normalizeTrustedText((body as Record<string, unknown>)?.subject, 500);
+  const subject = subjectIn || confirmationEmailSubject(toTemplate(order));
 
   if (!carrierEmail || !html) {
     return NextResponse.json(

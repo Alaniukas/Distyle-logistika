@@ -12,6 +12,19 @@ export type PickupIntentResult = {
   reason: string;
 };
 
+function hasStrongPickupSignals(subject: string, bodyText: string, attachmentNames: string[]): boolean {
+  const text = `${subject}\n${bodyText}`.toLowerCase();
+  const names = attachmentNames.join(" ").toLowerCase();
+  const phraseHit =
+    /\b(ready for collection|ready for pickup|pick[\s-]?up address|pick[\s-]?up reference|loading list|packing list|collection address)\b/i.test(
+      text,
+    ) ||
+    /\b(pa[eė]mim|pakrovim|u[kž]krovim|krovinio pa[eė]mim)\b/i.test(text);
+  const fileHint =
+    /\b(loading|pickup|packing|list|invoice|expo|exkaun|furninova|bolia)\b/i.test(names);
+  return phraseHit || (fileHint && /\b(pa[eė]mim|pakrovim|loading|pickup|collection)\b/i.test(text));
+}
+
 /**
  * Ar laiškas apie krovinio paėmimą / paruošimą vežėjui (adresas, loading list, pickup ref),
  * o ne vidinis statusų atnaujinimas, gamybos vėlavimai be logistikos ir pan.
@@ -20,6 +33,10 @@ export type PickupIntentResult = {
 export async function classifyMailPickupIntent(
   input: PickupIntentInput,
 ): Promise<PickupIntentResult> {
+  if (hasStrongPickupSignals(input.subject, input.bodyText, input.attachmentNames)) {
+    return { importOrder: true, reason: "stiprūs paėmimo/packing signalai (heuristika)" };
+  }
+
   if (process.env.MAIL_PICKUP_AI_DISABLED === "true") {
     return { importOrder: true, reason: "MAIL_PICKUP_AI_DISABLED" };
   }

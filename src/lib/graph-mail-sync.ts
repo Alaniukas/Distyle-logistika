@@ -17,6 +17,7 @@ import {
   subjectMatchesOptionalFilter,
 } from "@/lib/inbound-mail-rules";
 import { classifyMailPickupIntent } from "@/lib/mail-pickup-intent";
+import { matchesManufacturerRuleByFromOnly } from "@/lib/manufacturer-inbound-rules";
 import { prisma } from "@/lib/prisma";
 import { isAllowedSender } from "@/lib/sender-whitelist";
 import { allocateNextInternalId } from "@/lib/tu-number";
@@ -42,6 +43,142 @@ type GraphMessageBody = {
 type GraphFrom = {
   emailAddress?: { address?: string; name?: string };
 };
+
+function normalizeForCompare(v: string): string {
+  return v
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N}]+/gu, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function normalizeSubjectForDedup(subject: string): string {
+  return subject
+    .toLowerCase()
+    .replace(/^\s*(?:\[[^\]]+\]\s*)*/g, "")
+    .replace(/^(?:(?:re|reg|aw|sv|vs|antw|fw|fwd|wg|ang|enc|odp|ref)\.?\s*:\s*)+/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function pickupRefTokens(value: string | null | undefined): Set<string> {
+  if (!value) return new Set<string>();
+  const cleaned = value
+    .toUpperCase()
+    .replace(/[^A-Z0-9/,_;\- ]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  if (!cleaned) return new Set<string>();
+  const parts = cleaned
+    .split(/[;,]+/)
+    .map((x) => x.trim())
+    .filter((x) => x.length >= 5);
+  return new Set(parts);
+}
+
+function refsOverlap(a: string | null | undefined, b: string | null | undefined): boolean {
+  const ta = pickupRefTokens(a);
+  const tb = pickupRefTokens(b);
+  if (ta.size === 0 || tb.size === 0) return false;
+  for (const token of ta) {
+    if (tb.has(token)) return true;
+  }
+  return false;
+}
+
+function addressLooksSame(a: string | null | undefined, b: string | null | undefined): boolean {
+  const na = normalizeForCompare(a ?? "");
+  const nb = normalizeForCompare(b ?? "");
+  if (!na || !nb) return false;
+  if (na === nb) return true;
+  if (na.length >= 12 && nb.length >= 12 && (na.includes(nb) || nb.includes(na))) return true;
+  return false;
+}
+
+async function findPotentialDuplicateOrder(input: {
+  fromAddr: string;
+  subject: string;
+  pickupReference: string | null;
+  pickupAddress: string | null;
+}): Promise<{
+  id: string;
+  internalId: string;
+  manufacturer: string;
+  country: string;
+  pickupAddress: string;
+  pickupReference: string;
+  shipperComment: string;
+  attachmentNamesJson: string | null;
+  reviewRequired: boolean;
+  reviewNotes: string | null;
+} | null> {
+  const recent = await prisma.order.findMany({
+    where: {
+      source: "graph",
+      sourceFromEmail: input.fromAddr,
+      createdAt: { gte: new Date(Date.now() - 1000 * 60 * 60 * 24 * 30) },
+    },
+    orderBy: { createdAt: "desc" },
+    take: 20,
+    select: {
+      id: true,
+      internalId: true,
+      manufacturer: true,
+      country: true,
+      pickupAddress: true,
+      pickupReference: true,
+      shipperComment: true,
+      attachmentNamesJson: true,
+      reviewRequired: true,
+      reviewNotes: true,
+      emailSubject: true,
+    },
+  });
+
+  const subjectNorm = normalizeSubjectForDedup(input.subject);
+  for (const cand of recent) {
+    const candSubjectNorm = normalizeSubjectForDedup(cand.emailSubject ?? "");
+    const subjectClose =
+      Boolean(subjectNorm) &&
+      Boolean(candSubjectNorm) &&
+      (subjectNorm === candSubjectNorm ||
+        subjectNorm.includes(candSubjectNorm) ||
+        candSubjectNorm.includes(subjectNorm));
+
+    const refsMatch = refsOverlap(input.pickupReference, cand.pickupReference);
+    const addressMatch = addressLooksSame(input.pickupAddress, cand.pickupAddress);
+
+    // Mažinam false positive: bent vienas stiprus signalas + temos artumas arba du signalai.
+    if ((refsMatch && (subjectClose || addressMatch)) || (subjectClose && addressMatch)) {
+      return cand;
+    }
+  }
+  return null;
+}
+
+function extractReplyCommentBody(raw: string): string {
+  return raw
+    .replace(/^Tema:\s.*$/im, "")
+    .replace(/^Nuo:\s.*$/im, "")
+    .replace(/^\s*---\s*$/gm, "")
+    .trim();
+}
+
+function stripTechnicalReplyArtifacts(text: string): string {
+  return text
+    .replace(/^Papildymas iš atsakymo.*$/gim, "")
+    .replace(/\bGraph\s+[A-Za-z0-9+/=]{24,}\b/g, "")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}
+
+function hasUsefulReplyComment(text: string): boolean {
+  const compact = text.replace(/\s+/g, " ").trim();
+  if (!compact) return false;
+  if (compact === "(tuščias tekstas)") return false;
+  if (compact.length < 20) return false;
+  return true;
+}
 
 function isFileAttachment(raw: Record<string, unknown>): boolean {
   const t = String(raw["@odata.type"] ?? "");
@@ -148,7 +285,7 @@ export async function syncInboxFromGraph(): Promise<SyncMailResult> {
       continue;
     }
 
-    let full = await client
+    const full = await client
       .api(`/users/${encodeURIComponent(mailbox)}/messages/${item.id}`)
       .select(
         "id,subject,internetMessageId,body,bodyPreview,from,conversationId,internetMessageHeaders",
@@ -182,6 +319,8 @@ export async function syncInboxFromGraph(): Promise<SyncMailResult> {
             pickupReference: true,
             shipperComment: true,
             attachmentNamesJson: true,
+          reviewRequired: true,
+          reviewNotes: true,
           },
         })
       : null;
@@ -242,6 +381,14 @@ export async function syncInboxFromGraph(): Promise<SyncMailResult> {
       fromField?.emailAddress?.name ||
       "nežinomas@siuntėjas.lt";
     const fromName = fromField?.emailAddress?.name || fromAddr;
+    const manufacturerFromMatch = matchesManufacturerRuleByFromOnly(fromAddr);
+
+    if (isReply && !manufacturerFromMatch) {
+      skipped += 1;
+      details.push(`${item.id}: atsakymas iš ne gamintojo siuntėjo (${fromAddr}) — praleista`);
+      continue;
+    }
+
     const allowed = await isAllowedSender(fromAddr, subject);
     if (!allowed) {
       skipped += 1;
@@ -261,7 +408,6 @@ export async function syncInboxFromGraph(): Promise<SyncMailResult> {
     }
 
     const attachmentTextChunks = await extractAttachmentTexts(attachments);
-    const attachmentTexts = attachmentTextChunks.join("\n\n");
     let extraReview = "";
     if (attachments.length > 0 && attachmentTextChunks.length === 0) {
       extraReview =
@@ -276,49 +422,76 @@ export async function syncInboxFromGraph(): Promise<SyncMailResult> {
     });
     const mergedNotes = [parsed.reviewNotes, extraReview].filter(Boolean).join(" ").trim() || null;
 
-    const internalId = await allocateNextInternalId();
+    const potentialDuplicateOrder =
+      !existingThreadOrder && !isReply
+        ? await findPotentialDuplicateOrder({
+            fromAddr,
+            subject,
+            pickupReference: parsed.pickupReference,
+            pickupAddress: parsed.pickupAddress,
+          })
+        : null;
 
-    const appendBlock = [
-      "",
-      `---`,
-      `Papildymas iš atsakymo (Graph ${item.id})`,
-      `Tema: ${subject}`,
-      `Nuo: ${fromAddr}`,
-      `---`,
-      parsed.shipperComment,
-    ]
-      .filter(Boolean)
-      .join("\n");
+    const hasStructuredReplyData = Boolean(
+      (parsed.pickupAddress && parsed.pickupAddress !== "Adresas laiške") ||
+        parsed.pickupReference ||
+        parsed.weightKg !== null ||
+        parsed.volumeM3 !== null ||
+        parsed.cargoValue !== null,
+    );
+    const replyCommentBody = stripTechnicalReplyArtifacts(extractReplyCommentBody(parsed.shipperComment));
+    const shouldAppendReplyComment =
+      hasUsefulReplyComment(replyCommentBody) &&
+      (!isReply || hasStructuredReplyData);
+    const appendBlock = shouldAppendReplyComment
+      ? [
+          "",
+          `---`,
+          `Papildymas iš atsakymo`,
+          `Tema: ${subject}`,
+          `Nuo: ${fromAddr}`,
+          `---`,
+          replyCommentBody,
+        ]
+          .filter(Boolean)
+          .join("\n")
+      : "";
+    const shouldUpdateReviewState = hasStructuredReplyData || Boolean(extraReview);
 
-    const order = existingThreadOrder
+    const order = existingThreadOrder || potentialDuplicateOrder
       ? await prisma.order.update({
-          where: { id: existingThreadOrder.id },
+          where: { id: (existingThreadOrder ?? potentialDuplicateOrder)!.id },
           data: {
             // Atnaujinam tik jei naujas parsingas turi kažką naudingo; nesugadinam jau suvestų laukų.
-            manufacturer: (parsed.manufacturer ?? existingThreadOrder.manufacturer).slice(0, 200),
-            country: (parsed.country ?? existingThreadOrder.country).slice(0, 120),
-            pickupAddress: (parsed.pickupAddress ?? existingThreadOrder.pickupAddress).slice(0, 500),
+            manufacturer: (parsed.manufacturer ?? (existingThreadOrder ?? potentialDuplicateOrder)!.manufacturer).slice(0, 200),
+            country: (parsed.country ?? (existingThreadOrder ?? potentialDuplicateOrder)!.country).slice(0, 120),
+            pickupAddress: (parsed.pickupAddress ?? (existingThreadOrder ?? potentialDuplicateOrder)!.pickupAddress).slice(0, 500),
+            ...(parsed.palletDimensions
+              ? { palletDimensions: parsed.palletDimensions.slice(0, 2000) }
+              : {}),
             pickupReference: (
               (typeof parsed.pickupReference === "string" && parsed.pickupReference.trim()
                 ? parsed.pickupReference
-                : existingThreadOrder.pickupReference) ?? ""
+                : (existingThreadOrder ?? potentialDuplicateOrder)!.pickupReference) ?? ""
             ).slice(0, 2000),
             weightKg: parsed.weightKg ?? undefined,
             volumeM3: parsed.volumeM3 ?? undefined,
             cargoValue: parsed.cargoValue ?? undefined,
-            shipperComment: (existingThreadOrder.shipperComment + appendBlock).slice(0, 50000),
+            shipperComment: ((existingThreadOrder ?? potentialDuplicateOrder)!.shipperComment + appendBlock).slice(0, 50000),
             sourceFromEmail: fromAddr.slice(0, 320),
             emailSubject: subject.slice(0, 500),
-            attachmentNamesJson: attachmentNames ?? existingThreadOrder.attachmentNamesJson,
-            reviewRequired: parsed.reviewRequired || Boolean(extraReview),
-            reviewNotes: mergedNotes,
+            attachmentNamesJson: attachmentNames ?? (existingThreadOrder ?? potentialDuplicateOrder)!.attachmentNamesJson,
+            reviewRequired: shouldUpdateReviewState
+              ? parsed.reviewRequired || Boolean(extraReview)
+              : (existingThreadOrder ?? potentialDuplicateOrder)!.reviewRequired,
+            reviewNotes: shouldUpdateReviewState ? mergedNotes : (existingThreadOrder ?? potentialDuplicateOrder)!.reviewNotes,
             parsedConfidence: parsed.parsedConfidence,
             status: "pending_review",
           },
         })
       : await prisma.order.create({
           data: {
-            internalId,
+            internalId: await allocateNextInternalId(),
             manufacturer: (parsed.manufacturer ?? fromName).slice(0, 200),
             country: (
               (parsed.country ?? "").trim() ||
@@ -326,6 +499,7 @@ export async function syncInboxFromGraph(): Promise<SyncMailResult> {
               "Patikrinkite laiške"
             ).slice(0, 120),
             pickupAddress: (parsed.pickupAddress ?? "Adresas laiške").slice(0, 500),
+            palletDimensions: (parsed.palletDimensions ?? "").slice(0, 2000),
             weightKg: parsed.weightKg,
             volumeM3: parsed.volumeM3,
             cargoValue: parsed.cargoValue,
@@ -358,7 +532,7 @@ export async function syncInboxFromGraph(): Promise<SyncMailResult> {
 
     created += 1;
     details.push(
-      `${existingThreadOrder ? "Atnaujinta" : "Sukurta"} ${order.internalId} iš Graph ${item.id} (${subject})${
+      `${existingThreadOrder || potentialDuplicateOrder ? "Atnaujinta" : "Sukurta"} ${order.internalId} iš Graph ${item.id} (${subject})${
         parsed.reviewRequired ? " [reikia peržiūros]" : ""
       }`,
     );

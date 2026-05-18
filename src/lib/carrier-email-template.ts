@@ -7,6 +7,8 @@ export type OrderForTemplate = {
   manufacturer: string;
   country: string;
   pickupAddress: string;
+  /** Palečių matmenys (Bolia ir pan.) */
+  palletDimensions?: string;
   weightKg: number | null;
   volumeM3: number | null;
   shipperComment: string;
@@ -37,11 +39,13 @@ export function buildDefaultCarrierEmailHtml(
     (opts?.additionalNotes?.trim() ??
       order.shipperComment?.trim() ??
       "") || "—";
+  const pallets = order.palletDimensions?.trim();
 
   return `${automationNoticeHtml(order.internalId)}
 <p>Sveiki, prašome pateikti pasiūlymą pervežimui:</p>
 <p><b>Krovos duomenys</b></p>
 <p>Pakrovimo adresas: ${escapeHtml(order.pickupAddress)}<br><br>
+${pallets ? `Palečių matmenys: ${escapeHtml(pallets)}<br><br>` : ""}
 Svoris: ${escapeHtml(w)} kg<br><br>
 Tūris: ${escapeHtml(v)} m³<br><br>
 Komentarai iš gamintojo: ${escapeHtml(comment)}<br><br>

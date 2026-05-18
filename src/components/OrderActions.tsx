@@ -26,6 +26,7 @@ export type SerializedOrder = {
   manufacturer: string;
   country: string;
   pickupAddress: string;
+  palletDimensions: string;
   weightKg: number | null;
   volumeM3: number | null;
   shipperComment: string;
@@ -79,11 +80,48 @@ export function OrderActions({ order: initial }: Props) {
   const [confirmLoading, setConfirmLoading] = useState(false);
   const [confirmSending, setConfirmSending] = useState(false);
   const [deleting, setDeleting] = useState(false);
+  const [deletingOfferId, setDeletingOfferId] = useState<string | null>(null);
+  const [pickupAddressDraft, setPickupAddressDraft] = useState(initial.pickupAddress);
+  const [palletDimensionsDraft, setPalletDimensionsDraft] = useState(initial.palletDimensions ?? "");
+  const [savingAddress, setSavingAddress] = useState(false);
+  const [addressErr, setAddressErr] = useState<string | null>(null);
+  const [addressSaved, setAddressSaved] = useState(false);
 
   const bestId = useMemo(
     () => pickBestOfferId(offers.map((o) => ({ id: o.id, priceEur: o.priceEur, termDays: o.termDays }))),
     [offers],
   );
+
+  async function savePickupDetails() {
+    setAddressErr(null);
+    setAddressSaved(false);
+    setSavingAddress(true);
+    const res = await fetch(`/api/orders/${order.id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        pickupAddress: pickupAddressDraft,
+        palletDimensions: palletDimensionsDraft,
+      }),
+    });
+    setSavingAddress(false);
+    if (!res.ok) {
+      const j = await res.json().catch(() => ({}));
+      setAddressErr(typeof j.error === "string" ? j.error : "Nepavyko išsaugoti");
+      return;
+    }
+    const updated = (await res.json()) as SerializedOrder;
+    setOrder((prev) => ({
+      ...prev,
+      pickupAddress: updated.pickupAddress,
+      palletDimensions: updated.palletDimensions ?? "",
+      reviewRequired: updated.reviewRequired,
+    }));
+    setPickupAddressDraft(updated.pickupAddress);
+    setPalletDimensionsDraft(updated.palletDimensions ?? "");
+    setAddressSaved(true);
+    router.refresh();
+  }
 
   async function openSendModal() {
     setSendErr(null);
@@ -216,6 +254,21 @@ export function OrderActions({ order: initial }: Props) {
       return;
     }
     router.push("/orders");
+    router.refresh();
+  }
+
+  async function deleteOffer(offerId: string) {
+    if (!window.confirm("Ištrinti šį vežėjo pasiūlymą?")) return;
+    setOfferErr(null);
+    setDeletingOfferId(offerId);
+    const res = await fetch(`/api/orders/${order.id}/offers/${offerId}`, { method: "DELETE" });
+    setDeletingOfferId(null);
+    if (!res.ok) {
+      const j = await res.json().catch(() => ({}));
+      setOfferErr(typeof j.error === "string" ? j.error : "Nepavyko ištrinti pasiūlymo");
+      return;
+    }
+    setOffers((prev) => prev.filter((o) => o.id !== offerId));
     router.refresh();
   }
 
@@ -363,6 +416,55 @@ export function OrderActions({ order: initial }: Props) {
           </div>
         </div>
       ) : null}
+
+      <section className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
+        <h2 className="text-sm font-semibold uppercase tracking-wide text-slate-500">
+          Pakrovimo duomenys
+        </h2>
+        <p className="mt-1 text-sm text-slate-600">
+          Jei automatinis importas neįrašė adreso (pvz. Saba Italia), įveskite ranka — bus
+          naudojama siunčiant vežėjams.
+        </p>
+        {addressErr ? (
+          <p className="mt-2 rounded-lg bg-red-50 px-3 py-2 text-sm text-red-800">{addressErr}</p>
+        ) : null}
+        {addressSaved ? (
+          <p className="mt-2 rounded-lg bg-emerald-50 px-3 py-2 text-sm text-emerald-800">
+            Išsaugota.
+          </p>
+        ) : null}
+        <label className="mt-3 block text-xs font-medium text-slate-600">Pakrovimo adresas</label>
+        <textarea
+          value={pickupAddressDraft}
+          onChange={(e) => {
+            setPickupAddressDraft(e.target.value);
+            setAddressSaved(false);
+          }}
+          rows={3}
+          className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-900"
+          placeholder="Gatvė, miestas, šalis, sandėlio darbo laikas…"
+        />
+        <label className="mt-3 block text-xs font-medium text-slate-600">
+          Palečių matmenys (Bolia ir pan.)
+        </label>
+        <input
+          value={palletDimensionsDraft}
+          onChange={(e) => {
+            setPalletDimensionsDraft(e.target.value);
+            setAddressSaved(false);
+          }}
+          className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-900"
+          placeholder="pvz. 2 paletės; WxLxH; 130 x 90 x 180 cm; 130 x 80 x 150 cm"
+        />
+        <button
+          type="button"
+          onClick={savePickupDetails}
+          disabled={savingAddress || !pickupAddressDraft.trim()}
+          className="mt-3 rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-medium hover:bg-slate-50 disabled:opacity-60"
+        >
+          {savingAddress ? "Saugoma…" : "Išsaugoti adresą ir matmenis"}
+        </button>
+      </section>
 
       <section className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
         {sendErr && !sendOpen ? (
@@ -538,13 +640,23 @@ export function OrderActions({ order: initial }: Props) {
                         <span className="line-clamp-3 whitespace-pre-wrap">{o.bodyText}</span>
                       </td>
                       <td className="py-3 align-top">
-                        <button
-                          type="button"
-                          onClick={() => openConfirm(o.carrierEmail)}
-                          className="rounded-md bg-emerald-600 px-2 py-1 text-xs font-medium text-white hover:bg-emerald-700"
-                        >
-                          Tvirtinti užsakymą
-                        </button>
+                        <div className="flex gap-2">
+                          <button
+                            type="button"
+                            onClick={() => openConfirm(o.carrierEmail)}
+                            className="rounded-md bg-emerald-600 px-2 py-1 text-xs font-medium text-white hover:bg-emerald-700"
+                          >
+                            Tvirtinti užsakymą
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => deleteOffer(o.id)}
+                            disabled={deletingOfferId === o.id}
+                            className="rounded-md border border-red-200 bg-red-50 px-2 py-1 text-xs font-medium text-red-700 hover:bg-red-100 disabled:opacity-60"
+                          >
+                            {deletingOfferId === o.id ? "Trinama…" : "Ištrinti"}
+                          </button>
+                        </div>
                       </td>
                     </tr>
                   );

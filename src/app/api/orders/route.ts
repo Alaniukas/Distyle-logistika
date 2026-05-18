@@ -1,4 +1,5 @@
 import { prisma } from "@/lib/prisma";
+import { normalizeTrustedText } from "@/lib/input-security";
 import { allocateNextInternalId } from "@/lib/tu-number";
 import { NextResponse } from "next/server";
 
@@ -16,9 +17,9 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "Neteisingas JSON" }, { status: 400 });
   }
 
-  const manufacturer = String((body as Record<string, unknown>).manufacturer ?? "").trim();
-  const country = String((body as Record<string, unknown>).country ?? "").trim();
-  const pickupAddress = String((body as Record<string, unknown>).pickupAddress ?? "").trim();
+  const manufacturer = normalizeTrustedText((body as Record<string, unknown>).manufacturer, 200);
+  const country = normalizeTrustedText((body as Record<string, unknown>).country, 120);
+  const pickupAddress = normalizeTrustedText((body as Record<string, unknown>).pickupAddress, 500);
   if (!manufacturer || !country || !pickupAddress) {
     return NextResponse.json(
       { error: "Privalomi laukai: gamintojas, šalis, pakrovimo adresas" },
@@ -37,8 +38,8 @@ export async function POST(req: Request) {
       ? null
       : Number(volumeRaw);
 
-  const shipperComment = String((body as Record<string, unknown>).shipperComment ?? "").trim();
-  const pickupReference = String((body as Record<string, unknown>).pickupReference ?? "").trim();
+  const shipperComment = normalizeTrustedText((body as Record<string, unknown>).shipperComment, 50_000);
+  const pickupReference = normalizeTrustedText((body as Record<string, unknown>).pickupReference, 2_000);
 
   const internalId = await allocateNextInternalId();
   const order = await prisma.order.create({
@@ -50,7 +51,7 @@ export async function POST(req: Request) {
       weightKg: weightKg !== null && !Number.isNaN(weightKg) ? weightKg : null,
       volumeM3: volumeM3 !== null && !Number.isNaN(volumeM3) ? volumeM3 : null,
       shipperComment,
-      pickupReference: pickupReference.slice(0, 2000),
+      pickupReference,
       status: "pending_review",
     },
   });

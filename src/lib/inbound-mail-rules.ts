@@ -16,7 +16,7 @@ export function subjectMatchesOptionalFilter(filter: string, subject: string): b
 
 /** Temos prefiksai, būdingi atsakymams / peradresavimams. */
 const REPLY_SUBJECT_PREFIX =
-  /^\s*(re|aw|sv|vs|antw|fw|fwd|wg|ang|enc|odp|ref)\s*[:：]\s*/i;
+  /^\s*(?:\[[^\]]+\]\s*)*(?:(re|reg|aw|sv|vs|antw|fw|fwd|wg|ang|enc|odp|ref)\.?\s*[:：]\s*)+/i;
 
 export function isLikelyReplySubject(subject: string): boolean {
   return REPLY_SUBJECT_PREFIX.test(subject.trim());

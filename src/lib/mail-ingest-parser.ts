@@ -7,6 +7,12 @@ import * as XLSX from "xlsx";
 import { GoogleGenerativeAI } from "@google/generative-ai";
 import { countryLabelFromRoute, inferRouteFromSubject } from "@/lib/carriers";
 import { geminiModelName } from "@/lib/gemini-model";
+import {
+  extractBoliaPalletDimensions,
+  extractSabaPickupAddress,
+  isBoliaContext,
+  isSabaContext,
+} from "@/lib/manufacturer-mail-extract";
 
 /** Šalis pagal pakrovimo / krovinio vietą laiške ir prieduose — ne pagal siuntėjo paštą. */
 function inferCountryFromBodyAndSubject(body: string, subject: string): string | null {
@@ -66,6 +72,7 @@ export type ParsedOrderData = {
   manufacturer: string | null;
   country: string | null;
   pickupAddress: string | null;
+  palletDimensions: string | null;
   /** Užsakymo / paėmimo nuorodos iš gamintojo laiško ar priedų (ne vidinis TU#) */
   pickupReference: string | null;
   weightKg: number | null;
@@ -156,6 +163,47 @@ function extractFurninovaHeaderReference(text: string): string | null {
   return m?.[1]?.trim() || null;
 }
 
+function applyManufacturerHeuristics(
+  parsed: ParsedOrderData,
+  subject: string,
+  body: string,
+  attachmentText: string,
+): ParsedOrderData {
+  const block = `${body}\n${attachmentText}`;
+  let pickupAddress = parsed.pickupAddress;
+  let palletDimensions = parsed.palletDimensions ?? "";
+
+  if (isSabaContext(parsed.manufacturer, subject, block)) {
+    const sabaAddr = extractSabaPickupAddress(block);
+    if (sabaAddr) pickupAddress = sabaAddr;
+  }
+
+  if (isBoliaContext(parsed.manufacturer, subject, block)) {
+    const dims = extractBoliaPalletDimensions(block);
+    if (dims) palletDimensions = dims;
+  }
+
+  const hasGoodAddr = Boolean(
+    pickupAddress && pickupAddress !== "Adresas laiške" && pickupAddress.length >= 12,
+  );
+  let reviewRequired = parsed.reviewRequired;
+  let reviewNotes = parsed.reviewNotes;
+  if (hasGoodAddr && /^Trūksta laukų:\s*pickupAddress\s*$/i.test(reviewNotes ?? "")) {
+    reviewRequired = false;
+    reviewNotes = null;
+  } else if (!hasGoodAddr) {
+    reviewRequired = true;
+  }
+
+  return {
+    ...parsed,
+    pickupAddress: pickupAddress ?? parsed.pickupAddress,
+    palletDimensions: palletDimensions || parsed.palletDimensions,
+    reviewRequired,
+    reviewNotes,
+  };
+}
+
 function preferFurninovaReference(
   manufacturer: string | null,
   subject: string,
@@ -203,10 +251,11 @@ export async function parseOrderFromMailSources(input: {
   const att = input.attachmentTexts.join("\n\n");
 
   if (!key) {
-    return {
+    const base = {
       manufacturer: fallbackManufacturerFromBody(body),
       country: fallbackCountryFromMailContent(body, input.subject, att),
       pickupAddress: body.split(/\r?\n/).find((l) => l.trim()) ?? "Adresas laiške",
+      palletDimensions: extractBoliaPalletDimensions(`${body}\n${att}`),
       pickupReference: null,
       weightKg: null,
       volumeM3: null,
@@ -219,6 +268,7 @@ export async function parseOrderFromMailSources(input: {
       reviewNotes:
         "Nėra GOOGLE_GENERATIVE_AI_API_KEY — šalis / gamintojas iš teksto (laiškas + priedai), ne iš siuntėjo.",
     };
+    return applyManufacturerHeuristics(base, input.subject, body, att);
   }
 
   const genAI = new GoogleGenerativeAI(key);
@@ -248,7 +298,8 @@ Grąžink tik JSON:
 Taisyklės:
 - manufacturer: gamintojas / tiekėjas iš krovinio (laiškas ar priedai), ne logistikos siuntėjas.
 - country: šalis, kur pakrovimas / gamintojas (adresas laiške ar PDF/XLS), ne siuntėjo šalis.
-- pickupAddress: pilnas pakrovimo adresas iš turinio ar priedų.
+- pickupAddress: pilnas pakrovimo adresas iš turinio ar priedų. Saba Italia: eilutės po „SABA ITALIA SRL“ (gatvė, CAP+miestas) iki „Warehouse hours“ / „Loading Details“.
+- Jei Bolia laiške yra palečių matmenys (WxLxH, pvz. „145 x 95 x 120 cm“) — įrašyk į comments, bet struktūriškai jie bus ištraukti atskirai.
 - pickupReference: visi gamintojo/tiekėjo nurodyti numeriai, reikalingi kroviniui atiduoti sandėlyje / paėmimui: užsakymo nr., pickup reference, order number, ticket ID, eilutėse „Pickup references“, „Order no.“, sąskaitose ir pan. Kelis numerius jungk kableliu arba kabliataškiu. SVARBU: čia NERA vidinio logistikos sistemos numerio formatu TU#xxxx — tokio gamintojas nesiunčia; neįrašyk mūsų vidinių kodų. Jei nerandi — null.
 - Speciali taisyklė Furninova: jei priede yra antraštė „Lista zaladunkowa nr ...“, pickupReference privalo būti būtent tas antraštės numeris (pvz. 25W/51/2/EXPO), net jei lentelėse yra daug kitų kodų.
 
@@ -301,10 +352,12 @@ ${att.slice(0, 60000)}
     const notes = reviewRequired
       ? `Trūksta laukų: ${missing.join(", ") || "pickupAddress"}`
       : null;
-    return {
+    return applyManufacturerHeuristics(
+      {
       manufacturer,
       country,
       pickupAddress: pickupAddress ?? "Adresas laiške",
+      palletDimensions: null,
       pickupReference,
       weightKg: toNumber(j.weightKg),
       volumeM3: toNumber(j.volumeM3),
@@ -320,26 +373,36 @@ ${att.slice(0, 60000)}
       parsedConfidence: toNumber(j.confidence),
       reviewRequired,
       reviewNotes: notes,
-    };
+    },
+      input.subject,
+      body,
+      att,
+    );
   } catch (err) {
     const hint = err instanceof Error ? err.message : String(err);
     const short =
       hint.length > 220 ? `${hint.slice(0, 220)}…` : hint;
-    return {
-      manufacturer: fallbackManufacturerFromBody(body),
-      country: fallbackCountryFromMailContent(body, input.subject, att),
-      pickupAddress: body.split(/\r?\n/).find((l) => l.trim()) ?? "Adresas laiške",
-      pickupReference: null,
-      weightKg: null,
-      volumeM3: null,
-      cargoValue: null,
-      shipperComment: [`Tema: ${input.subject}`, `Nuo: ${input.fromAddress}`, "---", body]
-        .join("\n")
-        .slice(0, 50000),
-      parsedConfidence: null,
-      reviewRequired: true,
-      reviewNotes: `AI klaida (${geminiModelName()}): ${short}. Patikrinkite raktą, modelį (GEMINI_MODEL) ir kvotą.`,
-    };
+    return applyManufacturerHeuristics(
+      {
+        manufacturer: fallbackManufacturerFromBody(body),
+        country: fallbackCountryFromMailContent(body, input.subject, att),
+        pickupAddress: body.split(/\r?\n/).find((l) => l.trim()) ?? "Adresas laiške",
+        palletDimensions: null,
+        pickupReference: null,
+        weightKg: null,
+        volumeM3: null,
+        cargoValue: null,
+        shipperComment: [`Tema: ${input.subject}`, `Nuo: ${input.fromAddress}`, "---", body]
+          .join("\n")
+          .slice(0, 50000),
+        parsedConfidence: null,
+        reviewRequired: true,
+        reviewNotes: `AI klaida (${geminiModelName()}): ${short}. Patikrinkite raktą, modelį (GEMINI_MODEL) ir kvotą.`,
+      },
+      input.subject,
+      body,
+      att,
+    );
   }
 }
 

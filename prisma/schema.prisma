@@ -21,6 +21,8 @@ model Order {
   manufacturer    String
   country         String
   pickupAddress   String
+  /// Palečių matmenys (pvz. Bolia WxLxH) — rodomi vežėjų laiške
+  palletDimensions String @default("")
   weightKg        Float?
   volumeM3        Float?
   shipperComment  String    @default("")

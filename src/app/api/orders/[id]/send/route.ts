@@ -2,6 +2,7 @@ import {
   carrierEmailSubject,
   type OrderForTemplate,
 } from "@/lib/carrier-email-template";
+import { normalizeTrustedText } from "@/lib/input-security";
 import { prisma } from "@/lib/prisma";
 import { sendCarrierEmailHtml } from "@/lib/send-carrier-email";
 import { NextResponse } from "next/server";
@@ -13,6 +14,7 @@ function toTemplate(order: {
   manufacturer: string;
   country: string;
   pickupAddress: string;
+  palletDimensions: string;
   weightKg: number | null;
   volumeM3: number | null;
   shipperComment: string;
@@ -23,6 +25,7 @@ function toTemplate(order: {
     manufacturer: order.manufacturer,
     country: order.country,
     pickupAddress: order.pickupAddress,
+    palletDimensions: order.palletDimensions,
     weightKg: order.weightKg,
     volumeM3: order.volumeM3,
     shipperComment: order.shipperComment,
@@ -44,8 +47,8 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
   }
 
   const body = await req.json().catch(() => ({}));
-  const html = typeof body.html === "string" ? body.html : "";
-  const subjectIn = typeof body.subject === "string" ? body.subject.trim() : "";
+  const html = normalizeTrustedText(body.html, 200_000);
+  const subjectIn = normalizeTrustedText(body.subject, 500);
   if (!html.trim()) {
     return NextResponse.json(
       { error: "Nurodykite laiško HTML (html)" },

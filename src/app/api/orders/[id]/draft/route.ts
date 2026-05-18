@@ -15,6 +15,7 @@ function toTemplate(order: {
   manufacturer: string;
   country: string;
   pickupAddress: string;
+  palletDimensions: string;
   weightKg: number | null;
   volumeM3: number | null;
   shipperComment: string;
@@ -25,6 +26,7 @@ function toTemplate(order: {
     manufacturer: order.manufacturer,
     country: order.country,
     pickupAddress: order.pickupAddress,
+    palletDimensions: order.palletDimensions,
     weightKg: order.weightKg,
     volumeM3: order.volumeM3,
     shipperComment: order.shipperComment,

@@ -6,6 +6,7 @@
     "dev": "next dev --webpack",
     "build": "next build",
     "start": "next start",
+    "test": "node --import tsx --test src/lib/__tests__/*.test.ts",
     "lint": "eslint",
     "env:setup": "node scripts/setup-env.mjs",
     "db:generate": "prisma generate",
@@ -39,6 +40,7 @@
     "eslint-config-next": "16.2.1",
     "prisma": "6.19.2",
     "tailwindcss": "^4",
+    "tsx": "^4.20.6",
     "typescript": "^5"
   }
 }

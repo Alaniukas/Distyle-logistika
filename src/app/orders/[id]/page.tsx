@@ -58,6 +58,12 @@ export default async function OrderDetailPage({
             <dt className="text-slate-500">Pakrovimo adresas</dt>
             <dd className="text-slate-800">{order.pickupAddress}</dd>
           </div>
+          {order.palletDimensions?.trim() ? (
+            <div className="sm:col-span-2">
+              <dt className="text-slate-500">Palečių matmenys</dt>
+              <dd className="text-slate-800">{order.palletDimensions}</dd>
+            </div>
+          ) : null}
           <div className="sm:col-span-2">
             <dt className="text-slate-500">
               Paėmimo / užsakymo nuorodos (iš gamintojo laiško ar priedų)

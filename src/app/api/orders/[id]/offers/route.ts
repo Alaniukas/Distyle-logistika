@@ -1,5 +1,6 @@
 import { prisma } from "@/lib/prisma";
 import { parseCarrierReplyBody } from "@/lib/parse-carrier-reply";
+import { normalizeTrustedText, parseSafeEmail } from "@/lib/input-security";
 import { NextResponse } from "next/server";
 
 export async function GET(
@@ -29,11 +30,11 @@ export async function POST(
   }
 
   const body = await req.json().catch(() => null);
-  const carrierEmail = String((body as Record<string, unknown>)?.carrierEmail ?? "").trim();
-  const bodyText = String((body as Record<string, unknown>)?.bodyText ?? "").trim();
+  const carrierEmail = parseSafeEmail((body as Record<string, unknown>)?.carrierEmail);
+  const bodyText = normalizeTrustedText((body as Record<string, unknown>)?.bodyText, 20_000);
   if (!carrierEmail || !bodyText) {
     return NextResponse.json(
-      { error: "Privalomi laukai: carrierEmail, bodyText" },
+      { error: "Privalomi ir korektiški laukai: carrierEmail, bodyText" },
       { status: 400 },
     );
   }
