@@ -34,7 +34,42 @@ export type SendResult = {
   to: string;
   bcc: string[];
   subject: string;
+  /** Graph pokalbio ID (vežėjų gija) — naudojama atsakymų susiejimui */
+  carrierThreadId: string | null;
 };
+
+async function findSentConversationId(
+  internalId: string,
+  subject: string,
+): Promise<string | null> {
+  if (!graphIsConfigured()) return null;
+  try {
+    const mailbox = graphMailboxUser();
+    const client = await getGraphClient();
+    const needle = internalId.replace(/'/g, "''");
+    const list = await client
+      .api(`/users/${encodeURIComponent(mailbox)}/mailFolders/sentitems/messages`)
+      .filter(`contains(subject, '${needle}')`)
+      .orderby("sentDateTime desc")
+      .top(3)
+      .select("id,subject,conversationId,sentDateTime")
+      .get();
+    const items = (list.value ?? []) as Array<{
+      subject?: string;
+      conversationId?: string;
+    }>;
+    for (const msg of items) {
+      if (msg.conversationId && (msg.subject ?? "").includes(internalId)) {
+        return msg.conversationId;
+      }
+    }
+    if (items[0]?.conversationId) return items[0].conversationId;
+    void subject;
+    return null;
+  } catch {
+    return null;
+  }
+}
 
 /**
  * Siunčia paruoštą HTML vežėjams (Graph arba SMTP pagal .env).
@@ -63,7 +98,8 @@ export async function sendCarrierEmailHtml(
       },
       saveToSentItems: true,
     });
-    return { html, route, to, bcc, subject };
+    const carrierThreadId = await findSentConversationId(order.internalId, subject);
+    return { html, route, to, bcc, subject, carrierThreadId };
   }
 
   const from = process.env.SMTP_USER!;
@@ -76,7 +112,7 @@ export async function sendCarrierEmailHtml(
     html,
   });
 
-  return { html, route, to, bcc, subject };
+  return { html, route, to, bcc, subject, carrierThreadId: null };
 }
 
 /** Vienam vežėjui (patvirtinimas užsakymui). */

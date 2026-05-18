@@ -53,20 +53,6 @@ export async function syncCarrierOffersFromGraph(): Promise<SyncOffersResult> {
       continue;
     }
 
-    const subject = item.subject ?? "";
-    const preview = item.bodyPreview ?? "";
-    const matched = await matchOrderForCarrierReply({
-      subject,
-      bodyPreview: preview,
-      senderEmail: fromAddr,
-      conversationId: item.conversationId ?? null,
-    });
-    if (!matched.orderId) {
-      skipped += 1;
-      details.push(`${item.id}: nepavyko susieti su užsakymu`);
-      continue;
-    }
-
     const existing = await prisma.carrierOffer.findUnique({
       where: { graphMessageId: item.id },
     });
@@ -80,6 +66,8 @@ export async function syncCarrierOffersFromGraph(): Promise<SyncOffersResult> {
       .select("id,subject,body,bodyPreview")
       .get();
 
+    const subject = (full.subject as string | undefined) ?? item.subject ?? "";
+    const preview = (full.bodyPreview as string | undefined) ?? item.bodyPreview ?? "";
     const bodyObj = full.body as { contentType?: string; content?: string } | undefined;
     let bodyText = "";
     if (bodyObj?.content) {
@@ -90,6 +78,20 @@ export async function syncCarrierOffersFromGraph(): Promise<SyncOffersResult> {
       }
     }
     if (!bodyText) bodyText = preview;
+
+    const matched = await matchOrderForCarrierReply({
+      subject,
+      bodyText,
+      senderEmail: fromAddr,
+      conversationId: item.conversationId ?? null,
+    });
+    if (!matched.orderId) {
+      skipped += 1;
+      details.push(
+        `${item.id}: nepavyko susieti su užsakymu (tema: ${subject.slice(0, 80)})`,
+      );
+      continue;
+    }
 
     const parsed = await parseCarrierReplyBody(bodyText);
 
@@ -105,7 +107,7 @@ export async function syncCarrierOffersFromGraph(): Promise<SyncOffersResult> {
         source: "email",
         graphMessageId: item.id,
         replySubject: subject.slice(0, 500),
-        matchMethod: matched.matchMethod ?? "sender",
+        matchMethod: matched.matchMethod ?? "tu",
       },
     });
 

@@ -69,6 +69,7 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
         emailHtml: result.html,
         countryRoute: result.route,
         sentAt: new Date(),
+        ...(result.carrierThreadId ? { threadId: result.carrierThreadId } : {}),
       },
     });
 

@@ -1,39 +1,35 @@
 import { prisma } from "@/lib/prisma";
 
-const TU_RE = /TU#\d{8}/i;
+/** Vidinis užsakymo nr. formatu TU#20260039 (leidžiamas tarpas po TU). */
+const TU_RE = /TU\s*#\s*(\d{8})/i;
 
-export type MatchMethod = "thread" | "tu" | "sender" | "manual";
+export type MatchMethod = "thread" | "tu" | "manual";
 
 export type MatchInput = {
   subject: string;
-  bodyPreview: string;
+  bodyText: string;
   senderEmail: string;
   conversationId?: string | null;
 };
 
 export function extractInternalIdFromText(text: string): string | null {
   const m = text.match(TU_RE);
-  return m ? m[0].toUpperCase() : null;
+  return m ? `TU#${m[1]}` : null;
 }
 
+/**
+ * Susieja vežėjo atsakymą su užsakymu.
+ * 1) TU# temoje / tekste (patikimiausia)
+ * 2) El. pašto gija (tik išsiųstiems vežėjams — threadId arba conversationId)
+ */
 export async function matchOrderForCarrierReply(input: MatchInput): Promise<{
   orderId: string | null;
   internalId: string | null;
   matchMethod: MatchMethod | null;
 }> {
-  const conversationId = input.conversationId?.trim();
-  if (conversationId) {
-    const byThread = await prisma.order.findFirst({
-      where: { conversationId },
-      select: { id: true, internalId: true },
-      orderBy: { createdAt: "desc" },
-    });
-    if (byThread) {
-      return { orderId: byThread.id, internalId: byThread.internalId, matchMethod: "thread" };
-    }
-  }
+  const haystack = `${input.subject}\n${input.bodyText}`;
 
-  const byTu = extractInternalIdFromText(`${input.subject}\n${input.bodyPreview}`);
+  const byTu = extractInternalIdFromText(haystack);
   if (byTu) {
     const order = await prisma.order.findUnique({
       where: { internalId: byTu },
@@ -44,20 +40,41 @@ export async function matchOrderForCarrierReply(input: MatchInput): Promise<{
     }
   }
 
-  const sender = input.senderEmail.trim().toLowerCase();
-  const recent = await prisma.carrierOffer.findFirst({
-    where: { carrierEmail: sender },
-    orderBy: { createdAt: "desc" },
-    select: { orderId: true, order: { select: { internalId: true } } },
-  });
-  if (recent?.orderId) {
-    return {
-      orderId: recent.orderId,
-      internalId: recent.order.internalId,
-      matchMethod: "sender",
-    };
+  const conversationId = input.conversationId?.trim();
+  if (conversationId) {
+    const byCarrierThread = await prisma.order.findFirst({
+      where: {
+        status: "sent_to_carriers",
+        threadId: conversationId,
+      },
+      select: { id: true, internalId: true },
+      orderBy: { sentAt: "desc" },
+    });
+    if (byCarrierThread) {
+      return {
+        orderId: byCarrierThread.id,
+        internalId: byCarrierThread.internalId,
+        matchMethod: "thread",
+      };
+    }
+
+    // Senesni įrašai: conversationId naudotas tik jei užsakymas jau išsiųstas vežėjams
+    const bySentConv = await prisma.order.findFirst({
+      where: {
+        status: "sent_to_carriers",
+        conversationId,
+      },
+      select: { id: true, internalId: true },
+      orderBy: { sentAt: "desc" },
+    });
+    if (bySentConv) {
+      return {
+        orderId: bySentConv.id,
+        internalId: bySentConv.internalId,
+        matchMethod: "thread",
+      };
+    }
   }
 
   return { orderId: null, internalId: null, matchMethod: null };
 }
-

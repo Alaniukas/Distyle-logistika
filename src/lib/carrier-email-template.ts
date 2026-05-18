@@ -41,6 +41,11 @@ export function buildDefaultCarrierEmailHtml(
       "") || "—";
   const pallets = order.palletDimensions?.trim();
 
+  const pickupRef = (order.pickupReference?.trim() || "").replace(
+    new RegExp(order.internalId.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "gi"),
+    "",
+  ).replace(/^[;,.\s]+|[;,.\s]+$/g, "").trim();
+
   return `${automationNoticeHtml(order.internalId)}
 <p>Sveiki, prašome pateikti pasiūlymą pervežimui:</p>
 <p><b>Krovos duomenys</b></p>
@@ -49,10 +54,7 @@ ${pallets ? `Palečių matmenys: ${escapeHtml(pallets)}<br><br>` : ""}
 Svoris: ${escapeHtml(w)} kg<br><br>
 Tūris: ${escapeHtml(v)} m³<br><br>
 Komentarai iš gamintojo: ${escapeHtml(comment)}<br><br>
-Vidinis užsakymo Nr. (mūsų sistema): ${escapeHtml(order.internalId)}<br><br>
-Paėmimo / užsakymo numeriai: ${escapeHtml(
-    order.pickupReference?.trim() || "—",
-  )}</p>
+Paėmimo / užsakymo numeriai (gamintojo): ${escapeHtml(pickupRef || "—")}</p>
 <p>Prašome nurodyti kainą ir patikslinti, ar ji <b>su PVM</b>, ar <b>be PVM</b>, taip pat pristatymo / pakrovimo terminus.</p>
 <p><b>Pristatymo adresas:</b></p>
 <p>UAB ExpoDesign (sąskaita ant UAB ExpoDesign)<br>
@@ -63,7 +65,8 @@ Antanas +370 640 40441<br>
 I-V – 8:00 – 16:00 val.</p>
 <p>(Pagal nutylėjimą – krovinius pristatyti/paimti į sandėlį su liftine mašina.)</p>
 <p>Prieš atvykstant, būtinai pasiskambinkite sandėlio vadovui Antanui +370 640 40441 (bent jau valandą prieš atvykstant).</p>
-<p>Iš anksto dėkoju.</p>`;
+<p>Iš anksto dėkoju.</p>
+<p><i>Užsakymo numeris atsakymui: <b>${escapeHtml(order.internalId)}</b></i></p>`;
 }
 
 function escapeHtml(s: string): string {
