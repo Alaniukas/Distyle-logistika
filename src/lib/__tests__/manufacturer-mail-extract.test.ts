@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 
 import {
   extractBoliaPalletDimensions,
+  extractFurninovaLoadingListRef,
   extractSabaPickupAddress,
 } from "@/lib/manufacturer-mail-extract";
 
@@ -22,6 +23,14 @@ The sofas are packed`;
   assert.ok(addr);
   assert.match(addr!, /VIA DELL'INDUSTRIA/i);
   assert.match(addr!, /35018 SAN MARTINO/i);
+});
+
+test("extractFurninovaLoadingListRef from Dorota reply subject", () => {
+  const ref = extractFurninovaLoadingListRef(
+    "Re: About new orders - loading list nr: 26W/22/2/EXPO",
+    "Please find attached updated loading list",
+  );
+  assert.equal(ref, "26W/22/2/EXPO");
 });
 
 test("extractBoliaPalletDimensions captures pallet count and sizes", () => {

@@ -85,3 +85,15 @@ export function isSabaContext(manufacturer: string | null, subject: string, body
   const ctx = `${manufacturer ?? ""}\n${subject}\n${body}`.toLowerCase();
   return ctx.includes("saba italia") || ctx.includes("saba italia srl") || /\bsaba\b/.test(ctx);
 }
+
+/** Furninova loading list nr., pvz. 26W/22/2/EXPO iš temos ar „Lista zaladunkowa nr …“. */
+export function extractFurninovaLoadingListRef(subject: string, body?: string): string | null {
+  const text = `${subject}\n${body ?? ""}`;
+  const expo = text.match(/(\d{2}W\/\d+(?:\/\d+)+\/EXPO)/i);
+  if (expo?.[1]) return expo[1].toUpperCase();
+  const lista = text.match(/lista\s+zaladunkowa\s+nr\s*[:\-]?\s*([A-Z0-9][A-Z0-9/._\-]*)/i);
+  if (lista?.[1]) return lista[1].toUpperCase().slice(0, 80);
+  const generic = text.match(/loading\s+list\s+nr\s*[:\-]?\s*([A-Z0-9][A-Z0-9/._\-]*)/i);
+  if (generic?.[1] && /EXPO/i.test(generic[1])) return generic[1].toUpperCase().slice(0, 80);
+  return null;
+}

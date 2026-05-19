@@ -19,6 +19,7 @@ function hasStrongPickupSignals(subject: string, bodyText: string, attachmentNam
     /\b(ready for collection|ready for pickup|pick[\s-]?up address|pick[\s-]?up reference|loading list|packing list|collection address)\b/i.test(
       text,
     ) ||
+    /\b\d{2}W\/\d+(?:\/\d+)+\/EXPO\b/i.test(text) ||
     /\b(pa[eė]mim|pakrovim|u[kž]krovim|krovinio pa[eė]mim)\b/i.test(text);
   const fileHint =
     /\b(loading|pickup|packing|list|invoice|expo|exkaun|furninova|bolia)\b/i.test(names);

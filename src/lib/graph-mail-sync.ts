@@ -17,6 +17,7 @@ import {
   subjectMatchesOptionalFilter,
 } from "@/lib/inbound-mail-rules";
 import { classifyMailPickupIntent } from "@/lib/mail-pickup-intent";
+import { extractFurninovaLoadingListRef } from "@/lib/manufacturer-mail-extract";
 import { matchesManufacturerRuleByFromOnly } from "@/lib/manufacturer-inbound-rules";
 import { prisma } from "@/lib/prisma";
 import { isAllowedSender } from "@/lib/sender-whitelist";
@@ -93,6 +94,62 @@ function addressLooksSame(a: string | null | undefined, b: string | null | undef
   if (na === nb) return true;
   if (na.length >= 12 && nb.length >= 12 && (na.includes(nb) || nb.includes(na))) return true;
   return false;
+}
+
+type ThreadOrderRow = {
+  id: string;
+  internalId: string;
+  manufacturer: string;
+  country: string;
+  pickupAddress: string;
+  pickupReference: string;
+  shipperComment: string;
+  emailSubject: string | null;
+  attachmentNamesJson: string | null;
+  reviewRequired: boolean;
+  reviewNotes: string | null;
+};
+
+const threadOrderSelect = {
+  id: true,
+  internalId: true,
+  manufacturer: true,
+  country: true,
+  pickupAddress: true,
+  pickupReference: true,
+  shipperComment: true,
+  emailSubject: true,
+  attachmentNamesJson: true,
+  reviewRequired: true,
+  reviewNotes: true,
+} as const;
+
+/** Furninova atsakymas su loading list nr. — susiejam su esamu užsakymu pagal nuorodą. */
+async function findOrderByLoadingListRef(
+  ref: string,
+  fromAddr: string,
+): Promise<ThreadOrderRow | null> {
+  const refUp = ref.toUpperCase();
+  const recent = await prisma.order.findMany({
+    where: {
+      createdAt: { gte: new Date(Date.now() - 1000 * 60 * 60 * 24 * 90) },
+      OR: [
+        { pickupReference: { contains: refUp, mode: "insensitive" } },
+        { emailSubject: { contains: refUp, mode: "insensitive" } },
+        { shipperComment: { contains: refUp, mode: "insensitive" } },
+      ],
+    },
+    orderBy: { createdAt: "desc" },
+    take: 15,
+    select: threadOrderSelect,
+  });
+  for (const cand of recent) {
+    const tokens = pickupRefTokens(cand.pickupReference);
+    if (tokens.has(refUp)) return cand;
+    const blob = `${cand.emailSubject ?? ""} ${cand.pickupReference} ${cand.shipperComment}`.toUpperCase();
+    if (blob.includes(refUp)) return cand;
+  }
+  return null;
 }
 
 async function findPotentialDuplicateOrder(input: {
@@ -270,9 +327,44 @@ export async function syncInboxFromGraph(): Promise<SyncMailResult> {
 
   const list = await listReq.get();
 
-  const items: GraphMessageListItem[] = list.value ?? [];
+  const itemMap = new Map<string, GraphMessageListItem>();
+  for (const row of (list.value ?? []) as GraphMessageListItem[]) {
+    itemMap.set(row.id, row);
+  }
+
+  // Perskaityti laiškai (pvz. Furninova RE su loading list) kitaip niekada nepatektų į sync.
+  const skipReadPass = process.env.MAIL_GRAPH_SKIP_READ_PASS === "true";
+  const lookbackHours = Number(process.env.MAIL_GRAPH_READ_LOOKBACK_HOURS ?? 96);
+  if (!skipReadPass && syncMode !== "recent") {
+    const since = new Date(Date.now() - lookbackHours * 60 * 60 * 1000).toISOString();
+    try {
+      const readList = await client
+        .api(`/users/${encodeURIComponent(mailbox)}/mailFolders/inbox/messages`)
+        .filter(`isRead eq true and receivedDateTime ge ${since}`)
+        .orderby("receivedDateTime desc")
+        .top(40)
+        .select("id,subject,internetMessageId,bodyPreview")
+        .get();
+      let readAdded = 0;
+      for (const row of (readList.value ?? []) as GraphMessageListItem[]) {
+        if (!itemMap.has(row.id)) {
+          itemMap.set(row.id, row);
+          readAdded += 1;
+        }
+      }
+      if (readAdded > 0) {
+        details.push(
+          `Papildomai įtraukta ${readAdded} perskaitytų laiškų (už ${lookbackHours} val.).`,
+        );
+      }
+    } catch {
+      details.push("Perskaitytų laiškų papildomas rinkinys nepavyko (Graph filtras).");
+    }
+  }
+
+  const items = [...itemMap.values()];
   if (items.length === 0) {
-    details.push("Nėra neperskaitytų laiškų.");
+    details.push("Nėra apdorotinų laiškų (neišsiųstų / perskaitytų rinkinyje).");
   }
 
   for (const item of items) {
@@ -307,21 +399,10 @@ export async function syncInboxFromGraph(): Promise<SyncMailResult> {
       .internetMessageHeaders;
     const isReply = isLikelyReplySubject(subject) || hasInReplyToFromGraphHeaders(imh);
 
-    const existingThreadOrder = convId
+    let existingThreadOrder: ThreadOrderRow | null = convId
       ? await prisma.order.findFirst({
           where: { conversationId: convId },
-          select: {
-            id: true,
-            internalId: true,
-            manufacturer: true,
-            country: true,
-            pickupAddress: true,
-            pickupReference: true,
-            shipperComment: true,
-            attachmentNamesJson: true,
-          reviewRequired: true,
-          reviewNotes: true,
-          },
+          select: threadOrderSelect,
         })
       : null;
 
@@ -382,6 +463,18 @@ export async function syncInboxFromGraph(): Promise<SyncMailResult> {
       "nežinomas@siuntėjas.lt";
     const fromName = fromField?.emailAddress?.name || fromAddr;
     const manufacturerFromMatch = matchesManufacturerRuleByFromOnly(fromAddr);
+
+    if (!existingThreadOrder && isReply && manufacturerFromMatch) {
+      const loadRef = extractFurninovaLoadingListRef(subject, textBody);
+      if (loadRef) {
+        existingThreadOrder = await findOrderByLoadingListRef(loadRef, fromAddr);
+        if (existingThreadOrder) {
+          details.push(
+            `${item.id}: susietas su ${existingThreadOrder.internalId} pagal loading list ${loadRef}`,
+          );
+        }
+      }
+    }
 
     if (isReply && !manufacturerFromMatch) {
       skipped += 1;
