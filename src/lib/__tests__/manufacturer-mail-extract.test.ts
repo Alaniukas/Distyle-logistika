@@ -5,6 +5,7 @@ import {
   extractBoliaPalletDimensions,
   extractFurninovaLoadingListRef,
   extractSabaPickupAddress,
+  resolveManufacturerEmailFromBody,
 } from "@/lib/manufacturer-mail-extract";
 
 test("extractSabaPickupAddress pulls street and CAP from typical loading mail", () => {
@@ -31,6 +32,25 @@ test("extractFurninovaLoadingListRef from Dorota reply subject", () => {
     "Please find attached updated loading list",
   );
   assert.equal(ref, "26W/22/2/EXPO");
+});
+
+test("extractFurninovaLoadingListRef from PDF attachment name with underscores", () => {
+  const ref = extractFurninovaLoadingListRef("FW: About current orders", "", [
+    "26W_24_2_EXPO.pdf",
+    "26W_25_2_EXPO.pdf",
+  ]);
+  assert.equal(ref, "26W/24/2/EXPO");
+});
+
+test("resolveManufacturerEmailFromBody finds Dorota in forwarded block", () => {
+  const body = `Sveikas,
+
+From: Dorota Swyd <dorota_owl@mail.ru>
+Subject: Re: About current orders
+
+Please find attached both loading lists:
+loading list nr: 26W/24/2/EXPO`;
+  assert.equal(resolveManufacturerEmailFromBody(body), "dorota_owl@mail.ru");
 });
 
 test("extractBoliaPalletDimensions captures pallet count and sizes", () => {

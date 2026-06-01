@@ -12,17 +12,22 @@ export type PickupIntentResult = {
   reason: string;
 };
 
-function hasStrongPickupSignals(subject: string, bodyText: string, attachmentNames: string[]): boolean {
+export function mailHasStrongPickupSignals(
+  subject: string,
+  bodyText: string,
+  attachmentNames: string[],
+): boolean {
   const text = `${subject}\n${bodyText}`.toLowerCase();
   const names = attachmentNames.join(" ").toLowerCase();
   const phraseHit =
     /\b(ready for collection|ready for pickup|pick[\s-]?up address|pick[\s-]?up reference|loading list|packing list|collection address)\b/i.test(
       text,
     ) ||
-    /\b\d{2}W\/\d+(?:\/\d+)+\/EXPO\b/i.test(text) ||
+    /\b\d{2}W[/_]\d+(?:[/_]\d+)+\/(?:expo|exkaun)\b/i.test(text) ||
     /\b(pa[eė]mim|pakrovim|u[kž]krovim|krovinio pa[eė]mim)\b/i.test(text);
   const fileHint =
-    /\b(loading|pickup|packing|list|invoice|expo|exkaun|furninova|bolia)\b/i.test(names);
+    /\b(loading|pickup|packing|list|invoice|expo|exkaun|furninova|bolia)\b/i.test(names) ||
+    /\b\d{2}w[/_]\d+(?:[/_]\d+)+\/(?:expo|exkaun)\b/i.test(names);
   return phraseHit || (fileHint && /\b(pa[eė]mim|pakrovim|loading|pickup|collection)\b/i.test(text));
 }
 
@@ -34,7 +39,7 @@ function hasStrongPickupSignals(subject: string, bodyText: string, attachmentNam
 export async function classifyMailPickupIntent(
   input: PickupIntentInput,
 ): Promise<PickupIntentResult> {
-  if (hasStrongPickupSignals(input.subject, input.bodyText, input.attachmentNames)) {
+  if (mailHasStrongPickupSignals(input.subject, input.bodyText, input.attachmentNames)) {
     return { importOrder: true, reason: "stiprūs paėmimo/packing signalai (heuristika)" };
   }
 

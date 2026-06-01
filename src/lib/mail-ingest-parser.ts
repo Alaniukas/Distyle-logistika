@@ -7,12 +7,14 @@ import * as XLSX from "xlsx";
 import { GoogleGenerativeAI } from "@google/generative-ai";
 import { countryLabelFromRoute, inferRouteFromSubject } from "@/lib/carriers";
 import { geminiModelName } from "@/lib/gemini-model";
+import { isForwardSubject } from "@/lib/inbound-mail-rules";
 import {
   extractBoliaPalletDimensions,
   extractSabaPickupAddress,
   isBoliaContext,
   isSabaContext,
 } from "@/lib/manufacturer-mail-extract";
+import { mailHasStrongPickupSignals } from "@/lib/mail-pickup-intent";
 
 /** Šalis pagal pakrovimo / krovinio vietą laiške ir prieduose — ne pagal siuntėjo paštą. */
 function inferCountryFromBodyAndSubject(body: string, subject: string): string | null {
@@ -89,16 +91,23 @@ function decodeB64(b64: string): Buffer {
 }
 
 function stripHtml(html: string): string {
-  return html
-    .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, " ")
+  let t = html
+    .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, "")
+    .replace(/<br\s*\/?>/gi, "\n")
+    .replace(/<\/p>/gi, "\n")
+    .replace(/<\/div>/gi, "\n")
+    .replace(/<\/tr>/gi, "\n")
     .replace(/<[^>]+>/g, " ")
     .replace(/&nbsp;/gi, " ")
     .replace(/&amp;/gi, "&")
     .replace(/&lt;/gi, "<")
     .replace(/&gt;/gi, ">")
     .replace(/&quot;/gi, '"')
-    .replace(/&#39;/gi, "'")
-    .replace(/\s+/g, " ")
+    .replace(/&#39;/gi, "'");
+  return t
+    .replace(/[ \t]+/g, " ")
+    .replace(/\n{3,}/g, "\n\n")
+    .replace(/ *\n */g, "\n")
     .trim();
 }
 
@@ -411,6 +420,36 @@ export function normalizeBodyText(contentType: string | undefined, content: stri
   return content.trim();
 }
 
+export type GraphBodyField = {
+  contentType?: string;
+  content?: string;
+};
+
+/** Graph: uniqueBody = tik šio laiško dalis (be cituotos gijos) — Outlook RE. */
+export function resolveGraphMessageText(input: {
+  body?: GraphBodyField | null;
+  uniqueBody?: GraphBodyField | null;
+  bodyPreview?: string | null;
+}): { fullBody: string; ingestBody: string; bodySource: "uniqueBody" | "body" | "preview" } {
+  const fromPart = (part: GraphBodyField | null | undefined): string => {
+    if (!part?.content?.trim()) return "";
+    return normalizeBodyText(part.contentType, part.content);
+  };
+
+  const unique = fromPart(input.uniqueBody);
+  const full = fromPart(input.body);
+  const preview = input.bodyPreview?.trim() ?? "";
+
+  const fullBody = full || preview || "(tuščias tekstas)";
+  if (unique.length >= 15) {
+    return { fullBody, ingestBody: unique, bodySource: "uniqueBody" };
+  }
+  if (full.length > 0) {
+    return { fullBody, ingestBody: full, bodySource: "body" };
+  }
+  return { fullBody, ingestBody: preview || "(tuščias tekstas)", bodySource: "preview" };
+}
+
 const QUOTE_CUT_MARKERS: RegExp[] = [
   /^\s*-{2,}\s*forwarded message\s*-{2,}\s*$/i,
   /^\s*from:\s+/i,
@@ -439,5 +478,28 @@ export function trimQuotedMailHistory(text: string): string {
   // Jei per agresyviai nukirpome beveik viską, paliekam originalą.
   if (joined.length >= 80) return joined;
   return text.trim();
+}
+
+/**
+ * Peradresavimuose (FW) duomenys dažnai būna po „From:“ — trimQuotedMailHistory juos nukerta.
+ * Jei po kirpimo nebelieka paėmimo signalų, bet pilname tekste yra — naudojame pilną tekstą.
+ */
+export function bodyTextForIngest(
+  subject: string,
+  fullText: string,
+  attachmentNames: string[] = [],
+  options?: { fromUniqueBody?: boolean },
+): string {
+  const full = fullText.trim() || "(tuščias tekstas)";
+  if (options?.fromUniqueBody) {
+    return trimQuotedMailHistory(full);
+  }
+  const trimmed = trimQuotedMailHistory(full);
+  if (!isForwardSubject(subject)) return trimmed;
+  const trimmedHas = mailHasStrongPickupSignals(subject, trimmed, attachmentNames);
+  const fullHas = mailHasStrongPickupSignals(subject, full, attachmentNames);
+  if (!trimmedHas && fullHas) return full;
+  if (trimmed.length < 160 && full.length > trimmed.length + 80) return full;
+  return trimmed;
 }
 

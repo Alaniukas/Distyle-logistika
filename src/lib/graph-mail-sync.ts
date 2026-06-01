@@ -4,10 +4,10 @@ import { countryLabelFromRoute, inferRouteFromSubject } from "@/lib/carriers";
 import { getGraphClient, graphMailboxUser } from "@/lib/graph-client";
 import type { SyncMailResult } from "@/lib/imap-sync";
 import {
+  bodyTextForIngest,
   extractAttachmentTexts,
-  normalizeBodyText,
   parseOrderFromMailSources,
-  trimQuotedMailHistory,
+  resolveGraphMessageText,
   type GraphAttachment,
 } from "@/lib/mail-ingest-parser";
 import {
@@ -17,8 +17,15 @@ import {
   subjectMatchesOptionalFilter,
 } from "@/lib/inbound-mail-rules";
 import { classifyMailPickupIntent } from "@/lib/mail-pickup-intent";
-import { extractFurninovaLoadingListRef } from "@/lib/manufacturer-mail-extract";
-import { matchesManufacturerRuleByFromOnly } from "@/lib/manufacturer-inbound-rules";
+import {
+  extractFurninovaLoadingListRef,
+  resolveManufacturerEmailFromBody,
+} from "@/lib/manufacturer-mail-extract";
+import {
+  matchesManufacturerRuleByFromOnly,
+  matchesN8nManufacturerRules,
+} from "@/lib/manufacturer-inbound-rules";
+import { mailHasStrongPickupSignals } from "@/lib/mail-pickup-intent";
 import { prisma } from "@/lib/prisma";
 import { isAllowedSender } from "@/lib/sender-whitelist";
 import { allocateNextInternalId } from "@/lib/tu-number";
@@ -34,12 +41,22 @@ type GraphMessageListItem = {
   subject?: string;
   internetMessageId?: string;
   bodyPreview?: string;
+  hasAttachments?: boolean;
 };
 
-type GraphMessageBody = {
-  contentType?: string;
-  content?: string;
-};
+function mergeListIntoMap(
+  map: Map<string, GraphMessageListItem>,
+  rows: GraphMessageListItem[],
+): number {
+  let added = 0;
+  for (const row of rows) {
+    if (!map.has(row.id)) {
+      map.set(row.id, row);
+      added += 1;
+    }
+  }
+  return added;
+}
 
 type GraphFrom = {
   emailAddress?: { address?: string; name?: string };
@@ -237,6 +254,24 @@ function hasUsefulReplyComment(text: string): boolean {
   return true;
 }
 
+function mergeAttachmentNamesJson(
+  incoming: string | null,
+  existing: string | null,
+): string | null {
+  const parse = (raw: string | null): string[] => {
+    if (!raw?.trim()) return [];
+    try {
+      const arr = JSON.parse(raw) as unknown;
+      if (!Array.isArray(arr)) return [];
+      return arr.filter((x): x is string => typeof x === "string" && x.trim().length > 0);
+    } catch {
+      return [];
+    }
+  };
+  const merged = [...new Set([...parse(existing), ...parse(incoming)])];
+  return merged.length > 0 ? JSON.stringify(merged) : incoming ?? existing;
+}
+
 function isFileAttachment(raw: Record<string, unknown>): boolean {
   const t = String(raw["@odata.type"] ?? "");
   if (t.includes("itemAttachment") || t.includes("referenceAttachment")) return false;
@@ -314,7 +349,7 @@ export async function syncInboxFromGraph(): Promise<SyncMailResult> {
   let listReq = client
     .api(`/users/${encodeURIComponent(mailbox)}/mailFolders/inbox/messages`)
     .top(50)
-    .select("id,subject,internetMessageId,bodyPreview");
+    .select("id,subject,internetMessageId,bodyPreview,hasAttachments");
   if (syncMode === "recent") {
     // Paskutiniai 50 (įskaitant perskaitytus), naujausi pirmi.
     listReq = listReq.orderby("receivedDateTime desc");
@@ -335,23 +370,46 @@ export async function syncInboxFromGraph(): Promise<SyncMailResult> {
   // Perskaityti laiškai (pvz. Furninova RE su loading list) kitaip niekada nepatektų į sync.
   const skipReadPass = process.env.MAIL_GRAPH_SKIP_READ_PASS === "true";
   const lookbackHours = Number(process.env.MAIL_GRAPH_READ_LOOKBACK_HOURS ?? 96);
+  const attachLookbackHours = Number(
+    process.env.MAIL_GRAPH_ATTACH_LOOKBACK_HOURS ?? lookbackHours,
+  );
+  const attachReadTop = Number(process.env.MAIL_GRAPH_ATTACH_READ_TOP ?? 30);
+  const listSelect = "id,subject,internetMessageId,bodyPreview,hasAttachments";
+
   if (!skipReadPass && syncMode !== "recent") {
     const since = new Date(Date.now() - lookbackHours * 60 * 60 * 1000).toISOString();
+    const sinceAttach = new Date(Date.now() - attachLookbackHours * 60 * 60 * 1000).toISOString();
+
+    try {
+      const attachReadList = await client
+        .api(`/users/${encodeURIComponent(mailbox)}/mailFolders/inbox/messages`)
+        .filter(`hasAttachments eq true and receivedDateTime ge ${sinceAttach}`)
+        .orderby("receivedDateTime desc")
+        .top(attachReadTop)
+        .select(listSelect)
+        .get();
+      const attachAdded = mergeListIntoMap(
+        itemMap,
+        (attachReadList.value ?? []) as GraphMessageListItem[],
+      );
+      if (attachAdded > 0) {
+        details.push(
+          `Papildomai įtraukta ${attachAdded} laiškų su priedais (perskaityti ar ne, ${attachLookbackHours} val.).`,
+        );
+      }
+    } catch {
+      details.push("Laiškų su priedais papildomas rinkinys nepavyko (Graph filtras).");
+    }
+
     try {
       const readList = await client
         .api(`/users/${encodeURIComponent(mailbox)}/mailFolders/inbox/messages`)
         .filter(`isRead eq true and receivedDateTime ge ${since}`)
         .orderby("receivedDateTime desc")
         .top(40)
-        .select("id,subject,internetMessageId,bodyPreview")
+        .select(listSelect)
         .get();
-      let readAdded = 0;
-      for (const row of (readList.value ?? []) as GraphMessageListItem[]) {
-        if (!itemMap.has(row.id)) {
-          itemMap.set(row.id, row);
-          readAdded += 1;
-        }
-      }
+      const readAdded = mergeListIntoMap(itemMap, (readList.value ?? []) as GraphMessageListItem[]);
       if (readAdded > 0) {
         details.push(
           `Papildomai įtraukta ${readAdded} perskaitytų laiškų (už ${lookbackHours} val.).`,
@@ -362,7 +420,11 @@ export async function syncInboxFromGraph(): Promise<SyncMailResult> {
     }
   }
 
-  const items = [...itemMap.values()];
+  const items = [...itemMap.values()].sort((a, b) => {
+    const ah = a.hasAttachments ? 1 : 0;
+    const bh = b.hasAttachments ? 1 : 0;
+    return bh - ah;
+  });
   if (items.length === 0) {
     details.push("Nėra apdorotinų laiškų (neišsiųstų / perskaitytų rinkinyje).");
   }
@@ -380,13 +442,15 @@ export async function syncInboxFromGraph(): Promise<SyncMailResult> {
     const full = await client
       .api(`/users/${encodeURIComponent(mailbox)}/messages/${item.id}`)
       .select(
-        "id,subject,internetMessageId,body,bodyPreview,from,conversationId,internetMessageHeaders",
+        "id,subject,internetMessageId,body,uniqueBody,bodyPreview,from,conversationId,internetMessageHeaders,hasAttachments",
       )
       .get()
       .catch(async () => {
         return client
           .api(`/users/${encodeURIComponent(mailbox)}/messages/${item.id}`)
-          .select("id,subject,internetMessageId,body,bodyPreview,from,conversationId")
+          .select(
+            "id,subject,internetMessageId,body,uniqueBody,bodyPreview,from,conversationId,hasAttachments",
+          )
           .get();
       });
 
@@ -436,15 +500,15 @@ export async function syncInboxFromGraph(): Promise<SyncMailResult> {
       /* priedai neprivalomi */
     }
 
-    const bodyObj = full.body as GraphMessageBody | undefined;
-    let textBody = "";
-    if (bodyObj?.content) {
-      textBody = normalizeBodyText(bodyObj.contentType, bodyObj.content);
+    const { fullBody, ingestBody, bodySource } = resolveGraphMessageText({
+      body: (full as { body?: { contentType?: string; content?: string } }).body,
+      uniqueBody: (full as { uniqueBody?: { contentType?: string; content?: string } }).uniqueBody,
+      bodyPreview: (full as { bodyPreview?: string }).bodyPreview,
+    });
+    const rawBody = fullBody;
+    if (bodySource === "uniqueBody") {
+      details.push(`${item.id}: naudojamas Graph uniqueBody (tik naujausias atsakymas)`);
     }
-    if (!textBody && full.bodyPreview) {
-      textBody = full.bodyPreview.trim();
-    }
-    textBody = trimQuotedMailHistory(textBody || "(tuščias tekstas)");
 
     const ingestKey = buildIngestKey(full.internetMessageId, full.id);
     const existing = await prisma.ingestedMail.findUnique({
@@ -462,12 +526,21 @@ export async function syncInboxFromGraph(): Promise<SyncMailResult> {
       fromField?.emailAddress?.name ||
       "nežinomas@siuntėjas.lt";
     const fromName = fromField?.emailAddress?.name || fromAddr;
-    const manufacturerFromMatch = matchesManufacturerRuleByFromOnly(fromAddr);
+    const embeddedManufacturerEmail = resolveManufacturerEmailFromBody(rawBody);
+    const manufacturerFromMatch =
+      matchesManufacturerRuleByFromOnly(fromAddr) || Boolean(embeddedManufacturerEmail);
+    const attNameList = attachments
+      .map((a) => a.name)
+      .filter((n): n is string => Boolean(n?.trim()));
+    const textBody = bodyTextForIngest(subject, ingestBody, attNameList, {
+      fromUniqueBody: bodySource === "uniqueBody",
+    });
+    const ingestFromAddr = embeddedManufacturerEmail ?? fromAddr;
 
-    if (!existingThreadOrder && isReply && manufacturerFromMatch) {
-      const loadRef = extractFurninovaLoadingListRef(subject, textBody);
+    if (!existingThreadOrder && isReply) {
+      const loadRef = extractFurninovaLoadingListRef(subject, `${ingestBody}\n${rawBody}`, attNameList);
       if (loadRef) {
-        existingThreadOrder = await findOrderByLoadingListRef(loadRef, fromAddr);
+        existingThreadOrder = await findOrderByLoadingListRef(loadRef, ingestFromAddr);
         if (existingThreadOrder) {
           details.push(
             `${item.id}: susietas su ${existingThreadOrder.internalId} pagal loading list ${loadRef}`,
@@ -477,12 +550,28 @@ export async function syncInboxFromGraph(): Promise<SyncMailResult> {
     }
 
     if (isReply && !manufacturerFromMatch) {
-      skipped += 1;
-      details.push(`${item.id}: atsakymas iš ne gamintojo siuntėjo (${fromAddr}) — praleista`);
-      continue;
+      const fwdPickup = mailHasStrongPickupSignals(subject, `${ingestBody}\n${rawBody}`, attNameList);
+      const embedRule =
+        embeddedManufacturerEmail &&
+        matchesN8nManufacturerRules(embeddedManufacturerEmail, `${subject}\n${rawBody}`);
+      if (!fwdPickup && !embedRule) {
+        skipped += 1;
+        details.push(
+          `${item.id}: atsakymas iš ne gamintojo siuntėjo (${fromAddr}) — praleista`,
+        );
+        continue;
+      }
+      details.push(
+        `${item.id}: vidinis FW/RE (${fromAddr}) — leidžiama (įterptas gamintojas arba loading list signalai)`,
+      );
     }
 
-    const allowed = await isAllowedSender(fromAddr, subject);
+    const allowed =
+      (await isAllowedSender(fromAddr, subject)) ||
+      (embeddedManufacturerEmail
+        ? await isAllowedSender(embeddedManufacturerEmail, `${subject}\n${rawBody.slice(0, 800)}`)
+        : false) ||
+      mailHasStrongPickupSignals(subject, `${ingestBody}\n${rawBody}`, attNameList);
     if (!allowed) {
       skipped += 1;
       details.push(`${item.id}: siuntėjas ne whitelist'e (${fromAddr})`);
@@ -492,7 +581,7 @@ export async function syncInboxFromGraph(): Promise<SyncMailResult> {
     const intent = await classifyMailPickupIntent({
       subject,
       bodyText: textBody,
-      attachmentNames: attachments.map((a) => a.name).filter((n): n is string => Boolean(n?.trim())),
+      attachmentNames: attNameList,
     });
     if (!intent.importOrder) {
       skipped += 1;
@@ -507,8 +596,8 @@ export async function syncInboxFromGraph(): Promise<SyncMailResult> {
         " Priedai pridėti, bet teksto iš jų negauta (per didelis failas, tik vaizdas arba Graph negrąžino turinio).";
     }
     const parsed = await parseOrderFromMailSources({
-      fromName,
-      fromAddress: fromAddr,
+      fromName: embeddedManufacturerEmail ? embeddedManufacturerEmail : fromName,
+      fromAddress: ingestFromAddr,
       subject,
       bodyText: textBody,
       attachmentTexts: attachmentTextChunks,
@@ -573,7 +662,10 @@ export async function syncInboxFromGraph(): Promise<SyncMailResult> {
             shipperComment: ((existingThreadOrder ?? potentialDuplicateOrder)!.shipperComment + appendBlock).slice(0, 50000),
             sourceFromEmail: fromAddr.slice(0, 320),
             emailSubject: subject.slice(0, 500),
-            attachmentNamesJson: attachmentNames ?? (existingThreadOrder ?? potentialDuplicateOrder)!.attachmentNamesJson,
+            attachmentNamesJson: mergeAttachmentNamesJson(
+              attachmentNames,
+              (existingThreadOrder ?? potentialDuplicateOrder)!.attachmentNamesJson,
+            ),
             reviewRequired: shouldUpdateReviewState
               ? parsed.reviewRequired || Boolean(extraReview)
               : (existingThreadOrder ?? potentialDuplicateOrder)!.reviewRequired,

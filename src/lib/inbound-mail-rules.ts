@@ -22,6 +22,12 @@ export function isLikelyReplySubject(subject: string): boolean {
   return REPLY_SUBJECT_PREFIX.test(subject.trim());
 }
 
+/** Tik peradresavimas (FW), ne paprastas RE — svarbu importui iš vidinio siuntėjo. */
+export function isForwardSubject(subject: string): boolean {
+  const s = subject.trim();
+  return /^\s*(?:\[[^\]]+\]\s*)*(?:fw|fwd|wg)\.?\s*[:：]/i.test(s);
+}
+
 type NamedHeader = { name?: string; value?: string };
 
 export function hasInReplyToFromGraphHeaders(headers: NamedHeader[] | undefined): boolean {
