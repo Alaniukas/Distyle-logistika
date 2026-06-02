@@ -31,10 +31,12 @@ export async function syncCarrierOffersFromGraph(): Promise<SyncOffersResult> {
   let created = 0;
   let skipped = 0;
 
+  const listTop = Math.max(20, Math.min(200, Number(process.env.MAIL_GRAPH_OFFERS_TOP ?? 100)));
+
   const list = await client
     .api(`/users/${encodeURIComponent(mailbox)}/mailFolders/inbox/messages`)
     .orderby("receivedDateTime desc")
-    .top(50)
+    .top(listTop)
     .select("id,subject,bodyPreview,from,conversationId")
     .get();
 

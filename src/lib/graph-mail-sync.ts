@@ -116,6 +116,7 @@ function addressLooksSame(a: string | null | undefined, b: string | null | undef
 type ThreadOrderRow = {
   id: string;
   internalId: string;
+  status: string;
   manufacturer: string;
   country: string;
   pickupAddress: string;
@@ -130,6 +131,7 @@ type ThreadOrderRow = {
 const threadOrderSelect = {
   id: true,
   internalId: true,
+  status: true,
   manufacturer: true,
   country: true,
   pickupAddress: true,
@@ -140,6 +142,15 @@ const threadOrderSelect = {
   reviewRequired: true,
   reviewNotes: true,
 } as const;
+
+function isPrismaUniqueViolation(e: unknown): boolean {
+  return (
+    typeof e === "object" &&
+    e !== null &&
+    "code" in e &&
+    (e as { code: string }).code === "P2002"
+  );
+}
 
 /** Furninova atsakymas su loading list nr. — susiejam su esamu užsakymu pagal nuorodą. */
 async function findOrderByLoadingListRef(
@@ -174,18 +185,7 @@ async function findPotentialDuplicateOrder(input: {
   subject: string;
   pickupReference: string | null;
   pickupAddress: string | null;
-}): Promise<{
-  id: string;
-  internalId: string;
-  manufacturer: string;
-  country: string;
-  pickupAddress: string;
-  pickupReference: string;
-  shipperComment: string;
-  attachmentNamesJson: string | null;
-  reviewRequired: boolean;
-  reviewNotes: string | null;
-} | null> {
+}): Promise<ThreadOrderRow | null> {
   const recent = await prisma.order.findMany({
     where: {
       source: "graph",
@@ -195,16 +195,7 @@ async function findPotentialDuplicateOrder(input: {
     orderBy: { createdAt: "desc" },
     take: 20,
     select: {
-      id: true,
-      internalId: true,
-      manufacturer: true,
-      country: true,
-      pickupAddress: true,
-      pickupReference: true,
-      shipperComment: true,
-      attachmentNamesJson: true,
-      reviewRequired: true,
-      reviewNotes: true,
+      ...threadOrderSelect,
       emailSubject: true,
     },
   });
@@ -339,6 +330,7 @@ export async function syncInboxFromGraph(): Promise<SyncMailResult> {
   const subjectFilter = mailSubjectFilterFromEnv();
   const markSeen = process.env.MAIL_MARK_SEEN === "true";
   const syncMode = (process.env.MAIL_GRAPH_SYNC_MODE ?? "unread").trim().toLowerCase();
+  const listTop = Math.max(10, Math.min(500, Number(process.env.MAIL_GRAPH_LIST_TOP ?? 200)));
   const mailbox = graphMailboxUser();
   const client = await getGraphClient();
 
@@ -348,16 +340,23 @@ export async function syncInboxFromGraph(): Promise<SyncMailResult> {
 
   let listReq = client
     .api(`/users/${encodeURIComponent(mailbox)}/mailFolders/inbox/messages`)
-    .top(50)
+    .top(listTop)
     .select("id,subject,internetMessageId,bodyPreview,hasAttachments");
   if (syncMode === "recent") {
-    // Paskutiniai 50 (įskaitant perskaitytus), naujausi pirmi.
+    // Paskutiniai N (įskaitant perskaitytus), naujausi pirmi.
     listReq = listReq.orderby("receivedDateTime desc");
-    details.push("Graph sync režimas: recent (paskutiniai 50, read+unread).");
+    details.push(`Graph sync režimas: recent (paskutiniai ${listTop}, read+unread).`);
   } else {
-    // Numatytai: tik neperskaityti, seniausi pirmi.
-    listReq = listReq.filter("isRead eq false").orderby("receivedDateTime asc");
-    details.push("Graph sync režimas: unread (tik neperskaityti).");
+    // Numatytai: tik neperskaityti. SVARBU: naujausi pirmi, kad senų unread "šiukšlių"
+    // backlogas neužkimštų top ribos ir nepradangintų naujų laiškų.
+    const lookbackHours = Number(process.env.MAIL_GRAPH_UNREAD_LOOKBACK_HOURS ?? 336);
+    const since = new Date(Date.now() - lookbackHours * 60 * 60 * 1000).toISOString();
+    listReq = listReq
+      .filter(`isRead eq false and receivedDateTime ge ${since}`)
+      .orderby("receivedDateTime desc");
+    details.push(
+      `Graph sync režimas: unread (tik neperskaityti, naujausi pirmi, ${listTop}, lookback ${lookbackHours} val.).`,
+    );
   }
 
   const list = await listReq.get();
@@ -466,6 +465,7 @@ export async function syncInboxFromGraph(): Promise<SyncMailResult> {
     let existingThreadOrder: ThreadOrderRow | null = convId
       ? await prisma.order.findFirst({
           where: { conversationId: convId },
+          orderBy: { createdAt: "desc" },
           select: threadOrderSelect,
         })
       : null;
@@ -476,11 +476,28 @@ export async function syncInboxFromGraph(): Promise<SyncMailResult> {
     if (isReply && !existingThreadOrder) {
       details.push(`${item.id}: atsakymas (RE / In-Reply-To) — gijos užsakymo nėra, bandysim kurti naują iš reply`);
     }
-    // Jei nėra reply, bet gijoje jau yra užsakymas — saugom nuo dublikatų.
+    // Jei nėra reply, bet gijoje jau yra užsakymas — saugom nuo dublikatų,
+    // nebent aiškiai nauja paėmimo nuoroda (antras krovinys toje pačioje Outlook gijoje).
     if (!isReply && existingThreadOrder) {
-      skipped += 1;
-      details.push(`${item.id}: ta pati gija — užsakymas jau sukurtas (${existingThreadOrder.internalId})`);
-      continue;
+      const earlyRef = extractFurninovaLoadingListRef(
+        subject,
+        item.bodyPreview ?? "",
+        [],
+      );
+      const existingRefs = pickupRefTokens(existingThreadOrder.pickupReference);
+      if (
+        earlyRef &&
+        !existingRefs.has(earlyRef.toUpperCase())
+      ) {
+        details.push(
+          `${item.id}: gijoje ${existingThreadOrder.internalId}, bet nauja nuoroda ${earlyRef} — kuriam atskirą užsakymą`,
+        );
+        existingThreadOrder = null;
+      } else {
+        skipped += 1;
+        details.push(`${item.id}: ta pati gija — užsakymas jau sukurtas (${existingThreadOrder.internalId})`);
+        continue;
+      }
     }
 
     let attachments: GraphAttachment[] = [];
@@ -604,15 +621,14 @@ export async function syncInboxFromGraph(): Promise<SyncMailResult> {
     });
     const mergedNotes = [parsed.reviewNotes, extraReview].filter(Boolean).join(" ").trim() || null;
 
-    const potentialDuplicateOrder =
-      !existingThreadOrder && !isReply
-        ? await findPotentialDuplicateOrder({
-            fromAddr,
-            subject,
-            pickupReference: parsed.pickupReference,
-            pickupAddress: parsed.pickupAddress,
-          })
-        : null;
+    const potentialDuplicateOrder = !existingThreadOrder
+      ? await findPotentialDuplicateOrder({
+          fromAddr,
+          subject,
+          pickupReference: parsed.pickupReference,
+          pickupAddress: parsed.pickupAddress,
+        })
+      : null;
 
     const hasStructuredReplyData = Boolean(
       (parsed.pickupAddress && parsed.pickupAddress !== "Adresas laiške") ||
@@ -640,74 +656,100 @@ export async function syncInboxFromGraph(): Promise<SyncMailResult> {
       : "";
     const shouldUpdateReviewState = hasStructuredReplyData || Boolean(extraReview);
 
-    const order = existingThreadOrder || potentialDuplicateOrder
-      ? await prisma.order.update({
-          where: { id: (existingThreadOrder ?? potentialDuplicateOrder)!.id },
+    const mergeTarget = existingThreadOrder ?? potentialDuplicateOrder;
+    const newInternalId = mergeTarget ? null : await allocateNextInternalId();
+
+    let order;
+    try {
+      order = await prisma.$transaction(async (tx) => {
+        const dup = await tx.ingestedMail.findUnique({ where: { ingestKey } });
+        if (dup) return null;
+
+        const saved = mergeTarget
+          ? await tx.order.update({
+              where: { id: mergeTarget.id },
+              data: {
+                manufacturer: (parsed.manufacturer ?? mergeTarget.manufacturer).slice(0, 200),
+                country: (parsed.country ?? mergeTarget.country).slice(0, 120),
+                pickupAddress: (parsed.pickupAddress ?? mergeTarget.pickupAddress).slice(0, 500),
+                ...(parsed.palletDimensions
+                  ? { palletDimensions: parsed.palletDimensions.slice(0, 2000) }
+                  : {}),
+                pickupReference: (
+                  (typeof parsed.pickupReference === "string" && parsed.pickupReference.trim()
+                    ? parsed.pickupReference
+                    : mergeTarget.pickupReference) ?? ""
+                ).slice(0, 2000),
+                weightKg: parsed.weightKg ?? undefined,
+                volumeM3: parsed.volumeM3 ?? undefined,
+                cargoValue: parsed.cargoValue ?? undefined,
+                shipperComment: (mergeTarget.shipperComment + appendBlock).slice(0, 50000),
+                sourceFromEmail: fromAddr.slice(0, 320),
+                emailSubject: subject.slice(0, 500),
+                attachmentNamesJson: mergeAttachmentNamesJson(
+                  attachmentNames,
+                  mergeTarget.attachmentNamesJson,
+                ),
+                reviewRequired: shouldUpdateReviewState
+                  ? parsed.reviewRequired || Boolean(extraReview)
+                  : mergeTarget.reviewRequired,
+                reviewNotes: shouldUpdateReviewState ? mergedNotes : mergeTarget.reviewNotes,
+                parsedConfidence: parsed.parsedConfidence,
+                ...(mergeTarget.status === "sent_to_carriers"
+                  ? {}
+                  : { status: "pending_review" }),
+              },
+            })
+          : await tx.order.create({
+              data: {
+                internalId: newInternalId!,
+                manufacturer: (parsed.manufacturer ?? fromName).slice(0, 200),
+                country: (
+                  (parsed.country ?? "").trim() ||
+                  countryLabelFromRoute(inferRouteFromSubject(subject)) ||
+                  "Patikrinkite laiške"
+                ).slice(0, 120),
+                pickupAddress: (parsed.pickupAddress ?? "Adresas laiške").slice(0, 500),
+                palletDimensions: (parsed.palletDimensions ?? "").slice(0, 2000),
+                weightKg: parsed.weightKg,
+                volumeM3: parsed.volumeM3,
+                cargoValue: parsed.cargoValue,
+                shipperComment: parsed.shipperComment,
+                pickupReference: (parsed.pickupReference ?? "").slice(0, 2000),
+                source: "graph",
+                sourceFromEmail: fromAddr.slice(0, 320),
+                emailSubject: subject.slice(0, 500),
+                attachmentNamesJson: attachmentNames,
+                reviewRequired: parsed.reviewRequired || Boolean(extraReview),
+                reviewNotes: mergedNotes,
+                parsedConfidence: parsed.parsedConfidence,
+                conversationId: convId,
+                status: "pending_review",
+              },
+            });
+
+        await tx.ingestedMail.create({
           data: {
-            // Atnaujinam tik jei naujas parsingas turi kažką naudingo; nesugadinam jau suvestų laukų.
-            manufacturer: (parsed.manufacturer ?? (existingThreadOrder ?? potentialDuplicateOrder)!.manufacturer).slice(0, 200),
-            country: (parsed.country ?? (existingThreadOrder ?? potentialDuplicateOrder)!.country).slice(0, 120),
-            pickupAddress: (parsed.pickupAddress ?? (existingThreadOrder ?? potentialDuplicateOrder)!.pickupAddress).slice(0, 500),
-            ...(parsed.palletDimensions
-              ? { palletDimensions: parsed.palletDimensions.slice(0, 2000) }
-              : {}),
-            pickupReference: (
-              (typeof parsed.pickupReference === "string" && parsed.pickupReference.trim()
-                ? parsed.pickupReference
-                : (existingThreadOrder ?? potentialDuplicateOrder)!.pickupReference) ?? ""
-            ).slice(0, 2000),
-            weightKg: parsed.weightKg ?? undefined,
-            volumeM3: parsed.volumeM3 ?? undefined,
-            cargoValue: parsed.cargoValue ?? undefined,
-            shipperComment: ((existingThreadOrder ?? potentialDuplicateOrder)!.shipperComment + appendBlock).slice(0, 50000),
-            sourceFromEmail: fromAddr.slice(0, 320),
-            emailSubject: subject.slice(0, 500),
-            attachmentNamesJson: mergeAttachmentNamesJson(
-              attachmentNames,
-              (existingThreadOrder ?? potentialDuplicateOrder)!.attachmentNamesJson,
-            ),
-            reviewRequired: shouldUpdateReviewState
-              ? parsed.reviewRequired || Boolean(extraReview)
-              : (existingThreadOrder ?? potentialDuplicateOrder)!.reviewRequired,
-            reviewNotes: shouldUpdateReviewState ? mergedNotes : (existingThreadOrder ?? potentialDuplicateOrder)!.reviewNotes,
-            parsedConfidence: parsed.parsedConfidence,
-            status: "pending_review",
-          },
-        })
-      : await prisma.order.create({
-          data: {
-            internalId: await allocateNextInternalId(),
-            manufacturer: (parsed.manufacturer ?? fromName).slice(0, 200),
-            country: (
-              (parsed.country ?? "").trim() ||
-              countryLabelFromRoute(inferRouteFromSubject(subject)) ||
-              "Patikrinkite laiške"
-            ).slice(0, 120),
-            pickupAddress: (parsed.pickupAddress ?? "Adresas laiške").slice(0, 500),
-            palletDimensions: (parsed.palletDimensions ?? "").slice(0, 2000),
-            weightKg: parsed.weightKg,
-            volumeM3: parsed.volumeM3,
-            cargoValue: parsed.cargoValue,
-            shipperComment: parsed.shipperComment,
-            pickupReference: (parsed.pickupReference ?? "").slice(0, 2000),
-            source: "graph",
-            sourceFromEmail: fromAddr.slice(0, 320),
-            emailSubject: subject.slice(0, 500),
-            attachmentNamesJson: attachmentNames,
-            reviewRequired: parsed.reviewRequired || Boolean(extraReview),
-            reviewNotes: mergedNotes,
-            parsedConfidence: parsed.parsedConfidence,
-            conversationId: convId,
-            status: "pending_review",
+            ingestKey,
+            orderId: saved.id,
           },
         });
+        return saved;
+      });
 
-    await prisma.ingestedMail.create({
-      data: {
-        ingestKey,
-        orderId: order.id,
-      },
-    });
+      if (!order) {
+        skipped += 1;
+        details.push(`${item.id}: jau apdorota (race / ${ingestKey.slice(0, 40)}…)`);
+        continue;
+      }
+    } catch (e) {
+      if (isPrismaUniqueViolation(e)) {
+        skipped += 1;
+        details.push(`${item.id}: jau apdorota (unikalus ingestKey)`);
+        continue;
+      }
+      throw e;
+    }
 
     if (markSeen) {
       await client

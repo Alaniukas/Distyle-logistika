@@ -63,7 +63,6 @@ async function findSentConversationId(
         return msg.conversationId;
       }
     }
-    if (items[0]?.conversationId) return items[0].conversationId;
     void subject;
     return null;
   } catch {

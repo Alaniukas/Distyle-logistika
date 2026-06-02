@@ -86,13 +86,14 @@ export async function syncInboxFromImap(): Promise<SyncMailResult> {
           continue;
         }
 
+        // Anksčiau reply (RE/In-Reply-To) buvo praleidžiami, bet praktikoje tai "pradangina"
+        // realius naujus užsakymus, kurie siunčiami iš gijos. Leiskime importą ir palikime
+        // DI + whitelist'ui nuspręsti (Graph kelias reply'ų nepraranda).
         const inReply = parsed.inReplyTo;
         const hasReplyId =
           Array.isArray(inReply) ? inReply.some(Boolean) : Boolean(inReply && String(inReply).trim());
         if (hasReplyId || isLikelyReplySubject(subject)) {
-          skipped += 1;
-          details.push(`UID ${uid}: atsakymas (In-Reply-To / RE:) — praleidžiama`);
-          continue;
+          details.push(`UID ${uid}: atsakymas (In-Reply-To / RE:) — leisime importą (nebepraleidžiame)`);
         }
 
         const ingestKey = buildIngestKey(parsed.messageId, Number(uid));
@@ -141,30 +142,53 @@ export async function syncInboxFromImap(): Promise<SyncMailResult> {
         const route = inferRouteFromSubject(subject);
         const countryGuess = countryLabelFromRoute(route) ?? "Patikrinkite laiške";
 
-        const order = await prisma.order.create({
-          data: {
-            internalId,
-            manufacturer: fromName.slice(0, 200),
-            country: countryGuess.slice(0, 120),
-            pickupAddress: firstLine.slice(0, 500),
-            shipperComment: [
-              `Tema: ${subject}`,
-              `Nuo: ${fromAddr}`,
-              "---",
-              textBody,
-            ].join("\n"),
-            source: "imap",
-            emailSubject: subject.slice(0, 500),
-            status: "pending_review",
-          },
-        });
-
-        await prisma.ingestedMail.create({
-          data: {
-            ingestKey,
-            orderId: order.id,
-          },
-        });
+        let order;
+        try {
+          order = await prisma.$transaction(async (tx) => {
+            const dup = await tx.ingestedMail.findUnique({ where: { ingestKey } });
+            if (dup) return null;
+            const created = await tx.order.create({
+              data: {
+                internalId,
+                manufacturer: fromName.slice(0, 200),
+                country: countryGuess.slice(0, 120),
+                pickupAddress: firstLine.slice(0, 500),
+                shipperComment: [
+                  `Tema: ${subject}`,
+                  `Nuo: ${fromAddr}`,
+                  "---",
+                  textBody,
+                ].join("\n"),
+                source: "imap",
+                emailSubject: subject.slice(0, 500),
+                status: "pending_review",
+              },
+            });
+            await tx.ingestedMail.create({
+              data: {
+                ingestKey,
+                orderId: created.id,
+              },
+            });
+            return created;
+          });
+        } catch (e) {
+          const code =
+            typeof e === "object" && e !== null && "code" in e
+              ? (e as { code: string }).code
+              : "";
+          if (code === "P2002") {
+            skipped += 1;
+            details.push(`UID ${uid}: jau apdorota (unikalus ingestKey)`);
+            continue;
+          }
+          throw e;
+        }
+        if (!order) {
+          skipped += 1;
+          details.push(`UID ${uid}: jau apdorota (${ingestKey.slice(0, 40)}…)`);
+          continue;
+        }
 
         if (markSeen) {
           await client.messageFlagsAdd(String(uid), ["\\Seen"], { uid: true });
