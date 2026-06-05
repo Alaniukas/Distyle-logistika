@@ -4,6 +4,7 @@ import {
 } from "@/lib/carrier-email-template";
 import { normalizeTrustedText } from "@/lib/input-security";
 import { prisma } from "@/lib/prisma";
+import { canSendOrderToCarriers } from "@/lib/order-quantity-validation";
 import { sendCarrierEmailHtml } from "@/lib/send-carrier-email";
 import { NextResponse } from "next/server";
 
@@ -19,6 +20,7 @@ function toTemplate(order: {
   volumeM3: number | null;
   shipperComment: string;
   pickupReference: string;
+  packingListBreakdownJson: string | null;
 }): OrderForTemplate {
   return {
     internalId: order.internalId,
@@ -30,6 +32,7 @@ function toTemplate(order: {
     volumeM3: order.volumeM3,
     shipperComment: order.shipperComment,
     pickupReference: order.pickupReference,
+    packingListBreakdownJson: order.packingListBreakdownJson,
   };
 }
 
@@ -44,6 +47,11 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
       { error: "Siųsti galima tik užsakymus, kurie dar neišsiųsti vežėjams" },
       { status: 400 },
     );
+  }
+
+  const sendCheck = canSendOrderToCarriers(order);
+  if (!sendCheck.allowed) {
+    return NextResponse.json({ error: sendCheck.message }, { status: 400 });
   }
 
   const body = await req.json().catch(() => ({}));

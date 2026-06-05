@@ -34,3 +34,21 @@ export function matchesManufacturerRuleByFromOnly(fromAddress: string): boolean 
   }
   return false;
 }
+
+/** Pirmoji atitinkanti n8n taisyklė (From prioritetas, tada tema). */
+export function findManufacturerInboundRule(
+  fromAddress: string,
+  subject: string,
+): ManufacturerInboundRule | null {
+  const f = fromAddress.toLowerCase();
+  const s = subject.toLowerCase();
+  for (const r of rules) {
+    const email = r.email?.trim().toLowerCase();
+    if (email && f.includes(email)) return r;
+  }
+  for (const r of rules) {
+    const key = r.key?.trim().toLowerCase();
+    if (key && s.includes(key)) return r;
+  }
+  return null;
+}

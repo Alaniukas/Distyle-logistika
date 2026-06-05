@@ -38,6 +38,8 @@ export async function matchOrderForCarrierReply(input: MatchInput): Promise<{
     if (order) {
       return { orderId: order.id, internalId: order.internalId, matchMethod: "tu" };
     }
+    // Temoje yra TU#, bet užsakymas nerastas — nebandome thread fallback (sumažina klaidingą pririšimą).
+    return { orderId: null, internalId: byTu, matchMethod: null };
   }
 
   const conversationId = input.conversationId?.trim();

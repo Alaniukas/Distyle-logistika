@@ -7,6 +7,7 @@ import {
   bodyTextForIngest,
   extractAttachmentTexts,
   parseOrderFromMailSources,
+  tryExtractPackingListFromAttachments,
   resolveGraphMessageText,
   type GraphAttachment,
 } from "@/lib/mail-ingest-parser";
@@ -607,8 +608,15 @@ export async function syncInboxFromGraph(): Promise<SyncMailResult> {
     }
 
     const attachmentTextChunks = await extractAttachmentTexts(attachments);
+    const packingList = tryExtractPackingListFromAttachments(attachments, {
+      subject,
+      bodyText: textBody,
+      fromAddress: ingestFromAddr,
+      manufacturerHint: null,
+      attachmentTexts: attachmentTextChunks,
+    });
     let extraReview = "";
-    if (attachments.length > 0 && attachmentTextChunks.length === 0) {
+    if (attachments.length > 0 && attachmentTextChunks.length === 0 && !packingList) {
       extraReview =
         " Priedai pridėti, bet teksto iš jų negauta (per didelis failas, tik vaizdas arba Graph negrąžino turinio).";
     }
@@ -618,6 +626,7 @@ export async function syncInboxFromGraph(): Promise<SyncMailResult> {
       subject,
       bodyText: textBody,
       attachmentTexts: attachmentTextChunks,
+      packingList,
     });
     const mergedNotes = [parsed.reviewNotes, extraReview].filter(Boolean).join(" ").trim() || null;
 
@@ -682,6 +691,12 @@ export async function syncInboxFromGraph(): Promise<SyncMailResult> {
                 ).slice(0, 2000),
                 weightKg: parsed.weightKg ?? undefined,
                 volumeM3: parsed.volumeM3 ?? undefined,
+                ...(parsed.packingListBreakdownJson
+                  ? {
+                      packingListBreakdownJson: parsed.packingListBreakdownJson,
+                      packingListValidated: parsed.packingListValidated,
+                    }
+                  : {}),
                 cargoValue: parsed.cargoValue ?? undefined,
                 shipperComment: (mergeTarget.shipperComment + appendBlock).slice(0, 50000),
                 sourceFromEmail: fromAddr.slice(0, 320),
@@ -695,6 +710,8 @@ export async function syncInboxFromGraph(): Promise<SyncMailResult> {
                   : mergeTarget.reviewRequired,
                 reviewNotes: shouldUpdateReviewState ? mergedNotes : mergeTarget.reviewNotes,
                 parsedConfidence: parsed.parsedConfidence,
+                packingListBreakdownJson: parsed.packingListBreakdownJson,
+                packingListValidated: parsed.packingListValidated,
                 ...(mergeTarget.status === "sent_to_carriers"
                   ? {}
                   : { status: "pending_review" }),
@@ -716,6 +733,8 @@ export async function syncInboxFromGraph(): Promise<SyncMailResult> {
                 cargoValue: parsed.cargoValue,
                 shipperComment: parsed.shipperComment,
                 pickupReference: (parsed.pickupReference ?? "").slice(0, 2000),
+                packingListBreakdownJson: parsed.packingListBreakdownJson,
+                packingListValidated: parsed.packingListValidated,
                 source: "graph",
                 sourceFromEmail: fromAddr.slice(0, 320),
                 emailSubject: subject.slice(0, 500),

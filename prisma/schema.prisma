@@ -48,6 +48,10 @@ model Order {
   threadId        String?
   conversationId  String?
   parsedConfidence Float?
+  /// Saba PL struktūrinis skaidymas (JSON: lines, totals, warnings)
+  packingListBreakdownJson String? @db.Text
+  /// true kai svoris/tūris sutampa su packing list
+  packingListValidated   Boolean @default(false)
   createdAt       DateTime  @default(now())
   updatedAt       DateTime  @updatedAt
 

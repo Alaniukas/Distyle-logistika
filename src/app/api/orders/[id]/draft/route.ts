@@ -20,6 +20,7 @@ function toTemplate(order: {
   volumeM3: number | null;
   shipperComment: string;
   pickupReference: string;
+  packingListBreakdownJson: string | null;
 }): OrderForTemplate {
   return {
     internalId: order.internalId,
@@ -31,6 +32,7 @@ function toTemplate(order: {
     volumeM3: order.volumeM3,
     shipperComment: order.shipperComment,
     pickupReference: order.pickupReference,
+    packingListBreakdownJson: order.packingListBreakdownJson,
   };
 }
 

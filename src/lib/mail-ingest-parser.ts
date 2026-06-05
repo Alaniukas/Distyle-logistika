@@ -15,6 +15,13 @@ import {
   isSabaContext,
 } from "@/lib/manufacturer-mail-extract";
 import { mailHasStrongPickupSignals } from "@/lib/mail-pickup-intent";
+import { computePackingListValidated } from "@/lib/order-quantity-validation";
+import {
+  packingListOrderRefsJoined,
+  serializePackingListParse,
+  type PackingListParse,
+} from "@/lib/packing-list-parser";
+import { findManufacturerInboundRule } from "@/lib/manufacturer-inbound-rules";
 
 /** Šalis pagal pakrovimo / krovinio vietą laiške ir prieduose — ne pagal siuntėjo paštą. */
 function inferCountryFromBodyAndSubject(body: string, subject: string): string | null {
@@ -84,6 +91,13 @@ export type ParsedOrderData = {
   parsedConfidence: number | null;
   reviewRequired: boolean;
   reviewNotes: string | null;
+  packingListBreakdownJson: string | null;
+  packingListValidated: boolean;
+};
+
+const EMPTY_PACKING_FIELDS = {
+  packingListBreakdownJson: null as string | null,
+  packingListValidated: false,
 };
 
 function decodeB64(b64: string): Buffer {
@@ -172,8 +186,14 @@ function extractFurninovaHeaderReference(text: string): string | null {
   return m?.[1]?.trim() || null;
 }
 
+type ParsedOrderCore = Omit<
+  ParsedOrderData,
+  "packingListBreakdownJson" | "packingListValidated"
+> &
+  Partial<Pick<ParsedOrderData, "packingListBreakdownJson" | "packingListValidated">>;
+
 function applyManufacturerHeuristics(
-  parsed: ParsedOrderData,
+  parsed: ParsedOrderCore,
   subject: string,
   body: string,
   attachmentText: string,
@@ -205,9 +225,14 @@ function applyManufacturerHeuristics(
   }
 
   return {
+    ...EMPTY_PACKING_FIELDS,
     ...parsed,
     pickupAddress: pickupAddress ?? parsed.pickupAddress,
     palletDimensions: palletDimensions || parsed.palletDimensions,
+    packingListBreakdownJson:
+      parsed.packingListBreakdownJson ?? EMPTY_PACKING_FIELDS.packingListBreakdownJson,
+    packingListValidated:
+      parsed.packingListValidated ?? EMPTY_PACKING_FIELDS.packingListValidated,
     reviewRequired,
     reviewNotes,
   };
@@ -248,21 +273,123 @@ export async function extractAttachmentTexts(attachments: GraphAttachment[]): Pr
   return chunks;
 }
 
+export { tryExtractPackingListFromAttachments } from "@/lib/packing-list-parser";
+
+function pickupReferenceFromPackingList(pl: PackingListParse, fallback: string | null): string {
+  const joined = packingListOrderRefsJoined(pl.lines);
+  if (joined) return joined;
+  if (pl.pickupReferenceHint?.trim()) return pl.pickupReferenceHint.trim();
+  return fallback ?? "";
+}
+
+function applyPackingListToParsed(
+  parsed: ParsedOrderData,
+  pl: PackingListParse,
+  inboundRule: ReturnType<typeof findManufacturerInboundRule>,
+): ParsedOrderData {
+  const packingListBreakdownJson = serializePackingListParse(pl);
+  const weightKg = pl.totals.grossKg;
+  const volumeM3 = pl.totals.volumeM3;
+  const pickupReference = pickupReferenceFromPackingList(pl, parsed.pickupReference);
+  const packingListValidated = computePackingListValidated({
+    weightKg,
+    volumeM3,
+    packingListBreakdownJson,
+  });
+
+  let reviewNotes = parsed.reviewNotes;
+  if (pl.warnings.length > 0) {
+    reviewNotes = [reviewNotes, ...pl.warnings].filter(Boolean).join("; ");
+  }
+
+  const hasGoodAddr = Boolean(
+    parsed.pickupAddress &&
+      parsed.pickupAddress !== "Adresas laiške" &&
+      parsed.pickupAddress.length >= 12,
+  );
+
+  let reviewRequired = parsed.reviewRequired;
+  if (packingListValidated && hasGoodAddr && pl.warnings.length === 0) {
+    reviewRequired = false;
+    if (/^Trūksta laukų:/i.test(reviewNotes ?? "")) {
+      reviewNotes = null;
+    }
+  } else if (!hasGoodAddr) {
+    reviewRequired = true;
+    const who = inboundRule?.name ?? "gamintojo";
+    reviewNotes = reviewNotes
+      ? `${reviewNotes}; Trūksta pakrovimo adreso (${who})`
+      : `Trūksta pakrovimo adreso (${who})`;
+  }
+
+  const manufacturer =
+    parsed.manufacturer && parsed.manufacturer !== "Nežinoma (patikrinkite laišką)"
+      ? parsed.manufacturer
+      : inboundRule?.name ?? parsed.manufacturer;
+
+  const country =
+    parsed.country && parsed.country !== "test" && parsed.country !== "Patikrinkite laiške"
+      ? parsed.country
+      : inboundRule?.countryHint ?? parsed.country;
+
+  return {
+    ...parsed,
+    manufacturer,
+    country,
+    weightKg,
+    volumeM3,
+    pickupReference: pickupReference || parsed.pickupReference,
+    packingListBreakdownJson,
+    packingListValidated,
+    reviewRequired,
+    reviewNotes,
+    parsedConfidence: parsed.parsedConfidence ?? (packingListValidated ? 0.95 : 0.85),
+  };
+}
+
+function finalizeParsedOrder(
+  parsed: ParsedOrderCore,
+  packingList?: PackingListParse | null,
+  inboundRule?: ReturnType<typeof findManufacturerInboundRule>,
+): ParsedOrderData {
+  const base: ParsedOrderData = {
+    ...EMPTY_PACKING_FIELDS,
+    ...parsed,
+    packingListBreakdownJson:
+      parsed.packingListBreakdownJson ?? EMPTY_PACKING_FIELDS.packingListBreakdownJson,
+    packingListValidated:
+      parsed.packingListValidated ?? EMPTY_PACKING_FIELDS.packingListValidated,
+  };
+  if (packingList) {
+    return applyPackingListToParsed(base, packingList, inboundRule ?? null);
+  }
+  return base;
+}
+
 export async function parseOrderFromMailSources(input: {
   fromName: string;
   fromAddress: string;
   subject: string;
   bodyText: string;
   attachmentTexts: string[];
+  packingList?: PackingListParse | null;
 }): Promise<ParsedOrderData> {
   const key = process.env.GOOGLE_GENERATIVE_AI_API_KEY;
   const body = input.bodyText.trim();
   const att = input.attachmentTexts.join("\n\n");
+  const inboundRule = findManufacturerInboundRule(
+    input.fromAddress ?? input.fromName,
+    input.subject,
+  );
+  const structuredHint = input.packingList
+    ? `\n- SVARBU: Svoris (weightKg), tūris (volumeM3) ir užsakymų numeriai jau ištraukti struktūriškai iš priedo (${input.packingList.format}) — nekeisk šių skaičių.\n`
+    : "";
 
   if (!key) {
     const base = {
-      manufacturer: fallbackManufacturerFromBody(body),
-      country: fallbackCountryFromMailContent(body, input.subject, att),
+      manufacturer: inboundRule?.name ?? fallbackManufacturerFromBody(body),
+      country:
+        inboundRule?.countryHint ?? fallbackCountryFromMailContent(body, input.subject, att),
       pickupAddress: body.split(/\r?\n/).find((l) => l.trim()) ?? "Adresas laiške",
       palletDimensions: extractBoliaPalletDimensions(`${body}\n${att}`),
       pickupReference: null,
@@ -277,7 +404,11 @@ export async function parseOrderFromMailSources(input: {
       reviewNotes:
         "Nėra GOOGLE_GENERATIVE_AI_API_KEY — šalis / gamintojas iš teksto (laiškas + priedai), ne iš siuntėjo.",
     };
-    return applyManufacturerHeuristics(base, input.subject, body, att);
+    return finalizeParsedOrder(
+      applyManufacturerHeuristics(base, input.subject, body, att),
+      input.packingList,
+      inboundRule,
+    );
   }
 
   const genAI = new GoogleGenerativeAI(key);
@@ -311,7 +442,7 @@ Taisyklės:
 - Jei Bolia laiške yra palečių matmenys (WxLxH, pvz. „145 x 95 x 120 cm“) — įrašyk į comments, bet struktūriškai jie bus ištraukti atskirai.
 - pickupReference: visi gamintojo/tiekėjo nurodyti numeriai, reikalingi kroviniui atiduoti sandėlyje / paėmimui: užsakymo nr., pickup reference, order number, ticket ID, eilutėse „Pickup references“, „Order no.“, sąskaitose ir pan. Kelis numerius jungk kableliu arba kabliataškiu. SVARBU: čia NERA vidinio logistikos sistemos numerio formatu TU#xxxx — tokio gamintojas nesiunčia; neįrašyk mūsų vidinių kodų. Jei nerandi — null.
 - Speciali taisyklė Furninova: jei priede yra antraštė „Lista zaladunkowa nr ...“, pickupReference privalo būti būtent tas antraštės numeris (pvz. 25W/51/2/EXPO), net jei lentelėse yra daug kitų kodų.
-
+${structuredHint}
 Kontekstas (siuntėjas gali būti tik tarpininkas — jo nenaudok šaliai):
 Tema: ${input.subject}
 Siuntėjas (tik kontekstui): ${input.fromName} <${input.fromAddress}>
@@ -334,11 +465,11 @@ ${att.slice(0, 60000)}
     const manufacturer =
       typeof j.manufacturer === "string" && j.manufacturer.trim()
         ? j.manufacturer.trim()
-        : fallbackManufacturerFromBody(body);
+        : (inboundRule?.name ?? fallbackManufacturerFromBody(body));
     const country =
       typeof j.country === "string" && j.country.trim()
         ? j.country.trim()
-        : fallbackCountryFromMailContent(body, input.subject, att);
+        : (inboundRule?.countryHint ?? fallbackCountryFromMailContent(body, input.subject, att));
     const pickupAddress =
       typeof j.pickupAddress === "string" && j.pickupAddress.trim()
         ? j.pickupAddress.trim()
@@ -361,56 +492,65 @@ ${att.slice(0, 60000)}
     const notes = reviewRequired
       ? `Trūksta laukų: ${missing.join(", ") || "pickupAddress"}`
       : null;
-    return applyManufacturerHeuristics(
-      {
-      manufacturer,
-      country,
-      pickupAddress: pickupAddress ?? "Adresas laiške",
-      palletDimensions: null,
-      pickupReference,
-      weightKg: toNumber(j.weightKg),
-      volumeM3: toNumber(j.volumeM3),
-      cargoValue: toNumber(j.cargoValue),
-      shipperComment: [
-        `Tema: ${input.subject}`,
-        `Nuo: ${input.fromAddress}`,
-        "---",
-        typeof j.comments === "string" ? j.comments : body,
-      ]
-        .join("\n")
-        .slice(0, 50000),
-      parsedConfidence: toNumber(j.confidence),
-      reviewRequired,
-      reviewNotes: notes,
-    },
-      input.subject,
-      body,
-      att,
+    return finalizeParsedOrder(
+      applyManufacturerHeuristics(
+        {
+          manufacturer,
+          country,
+          pickupAddress: pickupAddress ?? "Adresas laiške",
+          palletDimensions: null,
+          pickupReference,
+          weightKg: toNumber(j.weightKg),
+          volumeM3: toNumber(j.volumeM3),
+          cargoValue: toNumber(j.cargoValue),
+          shipperComment: [
+            `Tema: ${input.subject}`,
+            `Nuo: ${input.fromAddress}`,
+            "---",
+            typeof j.comments === "string" ? j.comments : body,
+          ]
+            .join("\n")
+            .slice(0, 50000),
+          parsedConfidence: toNumber(j.confidence),
+          reviewRequired,
+          reviewNotes: notes,
+        },
+        input.subject,
+        body,
+        att,
+      ),
+      input.packingList,
+      inboundRule,
     );
   } catch (err) {
     const hint = err instanceof Error ? err.message : String(err);
     const short =
       hint.length > 220 ? `${hint.slice(0, 220)}…` : hint;
-    return applyManufacturerHeuristics(
-      {
-        manufacturer: fallbackManufacturerFromBody(body),
-        country: fallbackCountryFromMailContent(body, input.subject, att),
-        pickupAddress: body.split(/\r?\n/).find((l) => l.trim()) ?? "Adresas laiške",
-        palletDimensions: null,
-        pickupReference: null,
-        weightKg: null,
-        volumeM3: null,
-        cargoValue: null,
-        shipperComment: [`Tema: ${input.subject}`, `Nuo: ${input.fromAddress}`, "---", body]
-          .join("\n")
-          .slice(0, 50000),
-        parsedConfidence: null,
-        reviewRequired: true,
-        reviewNotes: `AI klaida (${geminiModelName()}): ${short}. Patikrinkite raktą, modelį (GEMINI_MODEL) ir kvotą.`,
-      },
-      input.subject,
-      body,
-      att,
+    return finalizeParsedOrder(
+      applyManufacturerHeuristics(
+        {
+        manufacturer: inboundRule?.name ?? fallbackManufacturerFromBody(body),
+        country:
+          inboundRule?.countryHint ?? fallbackCountryFromMailContent(body, input.subject, att),
+          pickupAddress: body.split(/\r?\n/).find((l) => l.trim()) ?? "Adresas laiške",
+          palletDimensions: null,
+          pickupReference: null,
+          weightKg: null,
+          volumeM3: null,
+          cargoValue: null,
+          shipperComment: [`Tema: ${input.subject}`, `Nuo: ${input.fromAddress}`, "---", body]
+            .join("\n")
+            .slice(0, 50000),
+          parsedConfidence: null,
+          reviewRequired: true,
+          reviewNotes: `AI klaida (${geminiModelName()}): ${short}. Patikrinkite raktą, modelį (GEMINI_MODEL) ir kvotą.`,
+        },
+        input.subject,
+        body,
+        att,
+      ),
+      input.packingList,
+      inboundRule,
     );
   }
 }

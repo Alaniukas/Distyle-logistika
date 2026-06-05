@@ -1,4 +1,5 @@
 import { normalizeTrustedText } from "@/lib/input-security";
+import { computePackingListValidated } from "@/lib/order-quantity-validation";
 import { prisma } from "@/lib/prisma";
 import { NextResponse } from "next/server";
 
@@ -24,21 +25,63 @@ export async function PATCH(req: Request, ctx: { params: Promise<{ id: string }>
     return NextResponse.json({ error: "Neteisingas JSON" }, { status: 400 });
   }
 
-  const data: { pickupAddress?: string; palletDimensions?: string; reviewRequired?: boolean } = {};
+  const existing = await prisma.order.findUnique({ where: { id } });
+  if (!existing) {
+    return NextResponse.json({ error: "Nerastas" }, { status: 404 });
+  }
+
+  const data: {
+    pickupAddress?: string;
+    palletDimensions?: string;
+    weightKg?: number | null;
+    volumeM3?: number | null;
+    reviewRequired?: boolean;
+    packingListValidated?: boolean;
+  } = {};
+
   if (body.pickupAddress !== undefined) {
     const addr = normalizeTrustedText(body.pickupAddress, 500);
     if (!addr) {
       return NextResponse.json({ error: "Pakrovimo adresas negali būti tuščias" }, { status: 400 });
     }
     data.pickupAddress = addr;
-    data.reviewRequired = false;
   }
   if (body.palletDimensions !== undefined) {
     data.palletDimensions = normalizeTrustedText(body.palletDimensions, 2000);
   }
+  if (body.weightKg !== undefined) {
+    const w = typeof body.weightKg === "number" ? body.weightKg : Number(body.weightKg);
+    data.weightKg = Number.isFinite(w) ? w : null;
+  }
+  if (body.volumeM3 !== undefined) {
+    const v = typeof body.volumeM3 === "number" ? body.volumeM3 : Number(body.volumeM3);
+    data.volumeM3 = Number.isFinite(v) ? v : null;
+  }
 
   if (Object.keys(data).length === 0) {
-    return NextResponse.json({ error: "Nurodykite pickupAddress arba palletDimensions" }, { status: 400 });
+    return NextResponse.json(
+      { error: "Nurodykite pickupAddress, palletDimensions, weightKg arba volumeM3" },
+      { status: 400 },
+    );
+  }
+
+  const merged = {
+    ...existing,
+    ...data,
+  };
+  if (
+    data.weightKg !== undefined ||
+    data.volumeM3 !== undefined ||
+    existing.packingListBreakdownJson
+  ) {
+    data.packingListValidated = computePackingListValidated(merged);
+    if (!data.packingListValidated && existing.packingListBreakdownJson) {
+      data.reviewRequired = true;
+    } else if (data.packingListValidated && data.pickupAddress) {
+      data.reviewRequired = false;
+    }
+  } else if (data.pickupAddress) {
+    data.reviewRequired = false;
   }
 
   const order = await prisma.order.update({

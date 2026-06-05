@@ -1,6 +1,7 @@
 "use client";
 
-import { offerValueScore, pickBestOfferId } from "@/lib/offer-score";
+import { validateOrderAgainstPackingList } from "@/lib/order-quantity-validation";
+import { offerValueScore, pickBestOfferId, priceComparableEur } from "@/lib/offer-score";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useMemo, useState } from "react";
@@ -41,6 +42,8 @@ export type SerializedOrder = {
   reviewNotes: string | null;
   parsedConfidence: number | null;
   cargoValue: number | null;
+  packingListBreakdownJson: string | null;
+  packingListValidated: boolean;
   createdAt: string;
   updatedAt: string;
   offers: SerializedOffer[];
@@ -87,8 +90,28 @@ export function OrderActions({ order: initial }: Props) {
   const [addressErr, setAddressErr] = useState<string | null>(null);
   const [addressSaved, setAddressSaved] = useState(false);
 
+  const quantityValidation = useMemo(
+    () =>
+      validateOrderAgainstPackingList({
+        weightKg: order.weightKg,
+        volumeM3: order.volumeM3,
+        packingListBreakdownJson: order.packingListBreakdownJson,
+        packingListValidated: order.packingListValidated,
+        reviewRequired: order.reviewRequired,
+      }),
+    [order],
+  );
+
   const bestId = useMemo(
-    () => pickBestOfferId(offers.map((o) => ({ id: o.id, priceEur: o.priceEur, termDays: o.termDays }))),
+    () =>
+      pickBestOfferId(
+        offers.map((o) => ({
+          id: o.id,
+          priceEur: o.priceEur,
+          termDays: o.termDays,
+          vatNote: o.vatNote,
+        })),
+      ),
     [offers],
   );
 
@@ -294,6 +317,16 @@ export function OrderActions({ order: initial }: Props) {
             {sendErr ? (
               <p className="mt-2 rounded-lg bg-red-50 px-3 py-2 text-sm text-red-800">{sendErr}</p>
             ) : null}
+            {!quantityValidation.ok ? (
+              <p className="mt-2 rounded-lg bg-amber-50 px-3 py-2 text-sm text-amber-900">
+                {quantityValidation.errors.join(" ") ||
+                  (order.reviewRequired ? "Užsakymas reikalauja peržiūros." : "")}
+              </p>
+            ) : (
+              <p className="mt-2 rounded-lg bg-emerald-50 px-3 py-2 text-sm text-emerald-900">
+                Kiekiai ir peržiūra — galima siųsti.
+              </p>
+            )}
             {draftLoading ? (
               <p className="mt-4 text-sm text-slate-500">Kraunama…</p>
             ) : (
@@ -523,6 +556,11 @@ export function OrderActions({ order: initial }: Props) {
             {order.reviewNotes ? ` ${order.reviewNotes}` : ""}
           </p>
         ) : null}
+        {!quantityValidation.ok && order.packingListBreakdownJson ? (
+          <p className="mt-3 rounded-lg bg-red-50 px-3 py-2 text-sm text-red-800">
+            {quantityValidation.errors.join(" ")}
+          </p>
+        ) : null}
       </section>
 
       {order.emailHtml ? (
@@ -587,8 +625,9 @@ export function OrderActions({ order: initial }: Props) {
                 <tr>
                   <th className="py-2 pr-2">Vežėjas</th>
                   <th className="py-2 pr-2">Kaina</th>
+                  <th className="py-2 pr-2">Be PVM*</th>
                   <th className="py-2 pr-2">Terminas</th>
-                  <th className="py-2 pr-2">Balas*</th>
+                  <th className="py-2 pr-2">Balas**</th>
                   <th className="py-2 pr-2">Susiejimas</th>
                   <th className="py-2 pr-2">Komentaras</th>
                   <th className="py-2">Veiksmai</th>
@@ -596,6 +635,7 @@ export function OrderActions({ order: initial }: Props) {
               </thead>
               <tbody className="divide-y divide-slate-100">
                 {offers.map((o) => {
+                  const comparable = priceComparableEur(o);
                   const score = offerValueScore(o);
                   const isBest = bestId === o.id && score != null;
                   return (
@@ -617,6 +657,9 @@ export function OrderActions({ order: initial }: Props) {
                         {o.vatNote ? (
                           <span className="ml-1 text-xs text-slate-500">({o.vatNote})</span>
                         ) : null}
+                      </td>
+                      <td className="py-3 pr-2 align-top text-slate-700">
+                        {comparable != null ? formatEur(comparable) : "—"}
                       </td>
                       <td className="py-3 pr-2 align-top text-slate-700">
                         {o.termText ?? "—"}
@@ -666,8 +709,8 @@ export function OrderActions({ order: initial }: Props) {
           )}
           {offers.length > 0 ? (
             <p className="mt-2 text-xs text-slate-500">
-              *Mažesnis balas (€/d.) = geresnis kainos ir termino santykis. Žymima tik jei nurodyta
-              kaina ir terminas.
+              *Kaina be PVM — su PVM perskaičiuota 21% tarifu lyginimui. **Mažesnis balas (€/d. be
+              PVM) = geriau; reikia kainos ir termino dienomis.
             </p>
           ) : null}
         </div>

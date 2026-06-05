@@ -1,5 +1,6 @@
 import { GoogleGenerativeAI } from "@google/generative-ai";
 import type { OrderForTemplate } from "@/lib/carrier-email-template";
+import { packingListFromOrder } from "@/lib/carrier-email-template";
 import { geminiModelName } from "@/lib/gemini-model";
 
 /**
@@ -28,6 +29,11 @@ export async function polishAdditionalNotesForCarriers(
   const raw = (order.shipperComment || "").trim();
   if (!raw) return "—";
 
+  const pl = packingListFromOrder(order);
+  const plNote = pl
+    ? "\n- Packing list lentelė (užsakymai, dėžės, m³, kg) jau rodoma atskirai — nekartok eilučių ir sumų.\n"
+    : "";
+
   const key = process.env.GOOGLE_GENERATIVE_AI_API_KEY;
   if (!key) {
     return stripShipperCommentMetadata(raw);
@@ -51,7 +57,7 @@ JAU ŽINOMA ATSKIRAI (NEKARTOK ir neįtrauk į atsakymą):
 ${raw}
 """
 
-TAISYKLĖS:
+TAISYKLĖS:${plNote}
 1. Parašyk tik operacinę informaciją: darbo laikus, ypatingas instrukcijas vairuotojui, neatitikimus tarp dokumentų – jei tai svarbu vežėjui. Jei paėmimo nuorodos jau pateiktos skiltyje „Gamintojo paėmimo/užsakymo nuorodos“ aukščiau – jų nekartok.
 2. Neįtrauk: el. pašto temos, siuntėjo, „Tema:“, „Nuo:“ ir pan. metaduomenų.
 3. Jei visa esmė jau padengta laukais aukščiau arba nieko nebelieka – atsakyk tik simboliu: —

@@ -1,4 +1,5 @@
 import { OrderActions, type SerializedOrder } from "@/components/OrderActions";
+import { PackingListBreakdown } from "@/components/PackingListBreakdown";
 
 export const dynamic = "force-dynamic";
 import { prisma } from "@/lib/prisma";
@@ -130,7 +131,13 @@ export default async function OrderDetailPage({
         </dl>
       </header>
 
-      <div className="mt-8">
+      <div className="mt-8 flex flex-col gap-8">
+        <PackingListBreakdown
+          packingListBreakdownJson={order.packingListBreakdownJson}
+          packingListValidated={order.packingListValidated}
+          weightKg={order.weightKg}
+          volumeM3={order.volumeM3}
+        />
         <OrderActions order={serialized} />
       </div>
     </div>
