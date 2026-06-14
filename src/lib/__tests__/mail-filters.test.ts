@@ -34,6 +34,26 @@ test("classifyMailPickupIntent allows strong pickup signals without AI key", asy
   else process.env.MAIL_PICKUP_AI_STRICT = prevStrict;
 });
 
+test("classifyMailPickupIntent rejects thank-you reply without pickup data", async () => {
+  const prevKey = process.env.GOOGLE_GENERATIVE_AI_API_KEY;
+  const prevStrict = process.env.MAIL_PICKUP_AI_STRICT;
+  delete process.env.GOOGLE_GENERATIVE_AI_API_KEY;
+  process.env.MAIL_PICKUP_AI_STRICT = "true";
+
+  const result = await classifyMailPickupIntent({
+    subject: "RE: [Bolia] Order status",
+    bodyText: "Thank you!",
+    attachmentNames: [],
+  });
+
+  assert.equal(result.importOrder, false);
+
+  if (prevKey === undefined) delete process.env.GOOGLE_GENERATIVE_AI_API_KEY;
+  else process.env.GOOGLE_GENERATIVE_AI_API_KEY = prevKey;
+  if (prevStrict === undefined) delete process.env.MAIL_PICKUP_AI_STRICT;
+  else process.env.MAIL_PICKUP_AI_STRICT = prevStrict;
+});
+
 test("classifyMailPickupIntent rejects weak signal mail in strict no-key mode", async () => {
   const prevKey = process.env.GOOGLE_GENERATIVE_AI_API_KEY;
   const prevStrict = process.env.MAIL_PICKUP_AI_STRICT;

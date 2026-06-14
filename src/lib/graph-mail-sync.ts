@@ -1,6 +1,5 @@
 import type { Client } from "@microsoft/microsoft-graph-client";
 import { ResponseType } from "@microsoft/microsoft-graph-client";
-import { countryLabelFromRoute, inferRouteFromSubject } from "@/lib/carriers";
 import { getGraphClient, graphMailboxUser } from "@/lib/graph-client";
 import type { SyncMailResult } from "@/lib/imap-sync";
 import {
@@ -22,11 +21,11 @@ import {
   extractFurninovaLoadingListRef,
   resolveManufacturerEmailFromBody,
 } from "@/lib/manufacturer-mail-extract";
+import { findManufacturerInboundRule } from "@/lib/manufacturer-inbound-rules";
 import {
-  matchesManufacturerRuleByFromOnly,
-  matchesN8nManufacturerRules,
-} from "@/lib/manufacturer-inbound-rules";
-import { mailHasStrongPickupSignals } from "@/lib/mail-pickup-intent";
+  resolveOrderCountry,
+  resolveOrderManufacturer,
+} from "@/lib/parsed-order-sanitize";
 import { prisma } from "@/lib/prisma";
 import { isAllowedSender } from "@/lib/sender-whitelist";
 import { allocateNextInternalId } from "@/lib/tu-number";
@@ -545,8 +544,6 @@ export async function syncInboxFromGraph(): Promise<SyncMailResult> {
       "nežinomas@siuntėjas.lt";
     const fromName = fromField?.emailAddress?.name || fromAddr;
     const embeddedManufacturerEmail = resolveManufacturerEmailFromBody(rawBody);
-    const manufacturerFromMatch =
-      matchesManufacturerRuleByFromOnly(fromAddr) || Boolean(embeddedManufacturerEmail);
     const attNameList = attachments
       .map((a) => a.name)
       .filter((n): n is string => Boolean(n?.trim()));
@@ -567,29 +564,9 @@ export async function syncInboxFromGraph(): Promise<SyncMailResult> {
       }
     }
 
-    if (isReply && !manufacturerFromMatch) {
-      const fwdPickup = mailHasStrongPickupSignals(subject, `${ingestBody}\n${rawBody}`, attNameList);
-      const embedRule =
-        embeddedManufacturerEmail &&
-        matchesN8nManufacturerRules(embeddedManufacturerEmail, `${subject}\n${rawBody}`);
-      if (!fwdPickup && !embedRule) {
-        skipped += 1;
-        details.push(
-          `${item.id}: atsakymas iš ne gamintojo siuntėjo (${fromAddr}) — praleista`,
-        );
-        continue;
-      }
-      details.push(
-        `${item.id}: vidinis FW/RE (${fromAddr}) — leidžiama (įterptas gamintojas arba loading list signalai)`,
-      );
-    }
-
     const allowed =
-      (await isAllowedSender(fromAddr, subject)) ||
-      (embeddedManufacturerEmail
-        ? await isAllowedSender(embeddedManufacturerEmail, `${subject}\n${rawBody.slice(0, 800)}`)
-        : false) ||
-      mailHasStrongPickupSignals(subject, `${ingestBody}\n${rawBody}`, attNameList);
+      (await isAllowedSender(fromAddr)) ||
+      (embeddedManufacturerEmail ? await isAllowedSender(embeddedManufacturerEmail) : false);
     if (!allowed) {
       skipped += 1;
       details.push(`${item.id}: siuntėjas ne whitelist'e (${fromAddr})`);
@@ -646,6 +623,27 @@ export async function syncInboxFromGraph(): Promise<SyncMailResult> {
         parsed.volumeM3 !== null ||
         parsed.cargoValue !== null,
     );
+    const hasValuableImportData =
+      Boolean(packingList) || hasStructuredReplyData || Boolean(parsed.packingListBreakdownJson);
+
+    const mergeTarget = existingThreadOrder ?? potentialDuplicateOrder;
+    if (!mergeTarget && !hasValuableImportData) {
+      skipped += 1;
+      details.push(`${item.id}: nėra struktūrinių logistikos duomenų — nekuriamas užsakymas`);
+      continue;
+    }
+
+    const inboundRule = findManufacturerInboundRule(ingestFromAddr, subject);
+    const mailBlock = `${textBody}\n${attachmentTextChunks.join("\n\n")}`;
+    const resolvedManufacturer = resolveOrderManufacturer(
+      parsed.manufacturer,
+      subject,
+      mailBlock,
+      inboundRule,
+      embeddedManufacturerEmail ?? fromName,
+    );
+    const resolvedCountry = resolveOrderCountry(parsed.country, subject, mailBlock);
+
     const replyCommentBody = stripTechnicalReplyArtifacts(extractReplyCommentBody(parsed.shipperComment));
     const shouldAppendReplyComment =
       hasUsefulReplyComment(replyCommentBody) &&
@@ -665,7 +663,6 @@ export async function syncInboxFromGraph(): Promise<SyncMailResult> {
       : "";
     const shouldUpdateReviewState = hasStructuredReplyData || Boolean(extraReview);
 
-    const mergeTarget = existingThreadOrder ?? potentialDuplicateOrder;
     const newInternalId = mergeTarget ? null : await allocateNextInternalId();
 
     let order;
@@ -678,8 +675,14 @@ export async function syncInboxFromGraph(): Promise<SyncMailResult> {
           ? await tx.order.update({
               where: { id: mergeTarget.id },
               data: {
-                manufacturer: (parsed.manufacturer ?? mergeTarget.manufacturer).slice(0, 200),
-                country: (parsed.country ?? mergeTarget.country).slice(0, 120),
+                manufacturer: (
+                  hasStructuredReplyData || packingList
+                    ? resolvedManufacturer
+                    : mergeTarget.manufacturer
+                ).slice(0, 200),
+                country: (
+                  hasStructuredReplyData || packingList ? resolvedCountry : mergeTarget.country
+                ).slice(0, 120),
                 pickupAddress: (parsed.pickupAddress ?? mergeTarget.pickupAddress).slice(0, 500),
                 ...(parsed.palletDimensions
                   ? { palletDimensions: parsed.palletDimensions.slice(0, 2000) }
@@ -720,12 +723,8 @@ export async function syncInboxFromGraph(): Promise<SyncMailResult> {
           : await tx.order.create({
               data: {
                 internalId: newInternalId!,
-                manufacturer: (parsed.manufacturer ?? fromName).slice(0, 200),
-                country: (
-                  (parsed.country ?? "").trim() ||
-                  countryLabelFromRoute(inferRouteFromSubject(subject)) ||
-                  "Patikrinkite laiške"
-                ).slice(0, 120),
+                manufacturer: resolvedManufacturer.slice(0, 200),
+                country: resolvedCountry.slice(0, 120),
                 pickupAddress: (parsed.pickupAddress ?? "Adresas laiške").slice(0, 500),
                 palletDimensions: (parsed.palletDimensions ?? "").slice(0, 2000),
                 weightKg: parsed.weightKg,

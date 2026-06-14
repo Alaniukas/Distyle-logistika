@@ -5,7 +5,6 @@ import { CanvasFactory } from "pdf-parse/worker";
 import { PDFParse } from "pdf-parse";
 import * as XLSX from "xlsx";
 import { GoogleGenerativeAI } from "@google/generative-ai";
-import { countryLabelFromRoute, inferRouteFromSubject } from "@/lib/carriers";
 import { geminiModelName } from "@/lib/gemini-model";
 import { isForwardSubject } from "@/lib/inbound-mail-rules";
 import {
@@ -22,52 +21,10 @@ import {
   type PackingListParse,
 } from "@/lib/packing-list-parser";
 import { findManufacturerInboundRule } from "@/lib/manufacturer-inbound-rules";
-
-/** Šalis pagal pakrovimo / krovinio vietą laiške ir prieduose — ne pagal siuntėjo paštą. */
-function inferCountryFromBodyAndSubject(body: string, subject: string): string | null {
-  const t = `${body}\n${subject}`.toLowerCase();
-  if (
-    /nyderland|nederland|netherlands|holland|zwijndrecht|merwedeweg|\bbolia\b|oranje transport|the netherlands/.test(
-      t,
-    )
-  ) {
-    return "Nyderlandai";
-  }
-  if (/italija|\bitaly\b|italia|furninova|saba italia|\bsrl\b.*ital|made in italy/.test(t)) {
-    return "Italija";
-  }
-  if (/lenkija|\bpoland\b|polska|polski|warsaw|krakow/.test(t)) {
-    return "Lenkija";
-  }
-  return null;
-}
-
-function fallbackCountryFromMailContent(
-  body: string,
-  subject: string,
-  attachmentText?: string,
-): string {
-  const block = `${body}\n${attachmentText ?? ""}`;
-  return (
-    inferCountryFromBodyAndSubject(block, subject) ??
-    countryLabelFromRoute(inferRouteFromSubject(subject)) ??
-    "test"
-  );
-}
-
-function fallbackManufacturerFromBody(body: string): string {
-  const lines = body
-    .split(/\r?\n/)
-    .map((l) => l.trim())
-    .filter((l) => l.length > 0);
-  const skip = /^(dear|hello|hi|sveiki|good|tema:|from:|nuo:|subject)/i;
-  for (const line of lines.slice(0, 12)) {
-    if (line.length >= 4 && line.length < 180 && !skip.test(line)) {
-      return line.slice(0, 200);
-    }
-  }
-  return "Nežinoma (patikrinkite laišką)";
-}
+import {
+  resolveOrderCountry,
+  resolveOrderManufacturer,
+} from "@/lib/parsed-order-sanitize";
 
 export type GraphAttachment = {
   id: string;
@@ -282,6 +239,29 @@ function pickupReferenceFromPackingList(pl: PackingListParse, fallback: string |
   return fallback ?? "";
 }
 
+type FinalizeContext = {
+  subject: string;
+  body: string;
+  att: string;
+  fromName: string;
+  inboundRule: ReturnType<typeof findManufacturerInboundRule>;
+};
+
+function sanitizeParsedFields(parsed: ParsedOrderData, ctx: FinalizeContext): ParsedOrderData {
+  const mailBlock = `${ctx.body}\n${ctx.att}`;
+  return {
+    ...parsed,
+    manufacturer: resolveOrderManufacturer(
+      parsed.manufacturer,
+      ctx.subject,
+      mailBlock,
+      ctx.inboundRule,
+      ctx.fromName,
+    ),
+    country: resolveOrderCountry(parsed.country, ctx.subject, mailBlock),
+  };
+}
+
 function applyPackingListToParsed(
   parsed: ParsedOrderData,
   pl: PackingListParse,
@@ -322,20 +302,8 @@ function applyPackingListToParsed(
       : `Trūksta pakrovimo adreso (${who})`;
   }
 
-  const manufacturer =
-    parsed.manufacturer && parsed.manufacturer !== "Nežinoma (patikrinkite laišką)"
-      ? parsed.manufacturer
-      : inboundRule?.name ?? parsed.manufacturer;
-
-  const country =
-    parsed.country && parsed.country !== "test" && parsed.country !== "Patikrinkite laiške"
-      ? parsed.country
-      : inboundRule?.countryHint ?? parsed.country;
-
   return {
     ...parsed,
-    manufacturer,
-    country,
     weightKg,
     volumeM3,
     pickupReference: pickupReference || parsed.pickupReference,
@@ -349,8 +317,8 @@ function applyPackingListToParsed(
 
 function finalizeParsedOrder(
   parsed: ParsedOrderCore,
+  ctx: FinalizeContext,
   packingList?: PackingListParse | null,
-  inboundRule?: ReturnType<typeof findManufacturerInboundRule>,
 ): ParsedOrderData {
   const base: ParsedOrderData = {
     ...EMPTY_PACKING_FIELDS,
@@ -360,10 +328,10 @@ function finalizeParsedOrder(
     packingListValidated:
       parsed.packingListValidated ?? EMPTY_PACKING_FIELDS.packingListValidated,
   };
-  if (packingList) {
-    return applyPackingListToParsed(base, packingList, inboundRule ?? null);
-  }
-  return base;
+  const withPl = packingList
+    ? applyPackingListToParsed(base, packingList, ctx.inboundRule ?? null)
+    : base;
+  return sanitizeParsedFields(withPl, ctx);
 }
 
 export async function parseOrderFromMailSources(input: {
@@ -384,13 +352,19 @@ export async function parseOrderFromMailSources(input: {
   const structuredHint = input.packingList
     ? `\n- SVARBU: Svoris (weightKg), tūris (volumeM3) ir užsakymų numeriai jau ištraukti struktūriškai iš priedo (${input.packingList.format}) — nekeisk šių skaičių.\n`
     : "";
+  const finalizeCtx: FinalizeContext = {
+    subject: input.subject,
+    body,
+    att,
+    fromName: input.fromName,
+    inboundRule,
+  };
 
   if (!key) {
     const base = {
-      manufacturer: inboundRule?.name ?? fallbackManufacturerFromBody(body),
-      country:
-        inboundRule?.countryHint ?? fallbackCountryFromMailContent(body, input.subject, att),
-      pickupAddress: body.split(/\r?\n/).find((l) => l.trim()) ?? "Adresas laiške",
+      manufacturer: resolveOrderManufacturer(null, input.subject, `${body}\n${att}`, inboundRule, input.fromName),
+      country: resolveOrderCountry(inboundRule?.countryHint ?? null, input.subject, `${body}\n${att}`),
+      pickupAddress: "Adresas laiške",
       palletDimensions: extractBoliaPalletDimensions(`${body}\n${att}`),
       pickupReference: null,
       weightKg: null,
@@ -406,8 +380,8 @@ export async function parseOrderFromMailSources(input: {
     };
     return finalizeParsedOrder(
       applyManufacturerHeuristics(base, input.subject, body, att),
+      finalizeCtx,
       input.packingList,
-      inboundRule,
     );
   }
 
@@ -465,11 +439,9 @@ ${att.slice(0, 60000)}
     const manufacturer =
       typeof j.manufacturer === "string" && j.manufacturer.trim()
         ? j.manufacturer.trim()
-        : (inboundRule?.name ?? fallbackManufacturerFromBody(body));
+        : null;
     const country =
-      typeof j.country === "string" && j.country.trim()
-        ? j.country.trim()
-        : (inboundRule?.countryHint ?? fallbackCountryFromMailContent(body, input.subject, att));
+      typeof j.country === "string" && j.country.trim() ? j.country.trim() : null;
     const pickupAddress =
       typeof j.pickupAddress === "string" && j.pickupAddress.trim()
         ? j.pickupAddress.trim()
@@ -519,8 +491,8 @@ ${att.slice(0, 60000)}
         body,
         att,
       ),
+      finalizeCtx,
       input.packingList,
-      inboundRule,
     );
   } catch (err) {
     const hint = err instanceof Error ? err.message : String(err);
@@ -529,10 +501,9 @@ ${att.slice(0, 60000)}
     return finalizeParsedOrder(
       applyManufacturerHeuristics(
         {
-        manufacturer: inboundRule?.name ?? fallbackManufacturerFromBody(body),
-        country:
-          inboundRule?.countryHint ?? fallbackCountryFromMailContent(body, input.subject, att),
-          pickupAddress: body.split(/\r?\n/).find((l) => l.trim()) ?? "Adresas laiške",
+        manufacturer: null,
+        country: inboundRule?.countryHint ?? null,
+          pickupAddress: "Adresas laiške",
           palletDimensions: null,
           pickupReference: null,
           weightKg: null,
@@ -549,8 +520,8 @@ ${att.slice(0, 60000)}
         body,
         att,
       ),
+      finalizeCtx,
       input.packingList,
-      inboundRule,
     );
   }
 }

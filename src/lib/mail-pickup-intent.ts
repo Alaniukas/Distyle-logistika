@@ -1,5 +1,6 @@
 import { GoogleGenerativeAI } from "@google/generative-ai";
 import { geminiModelName } from "@/lib/gemini-model";
+import { isConversationalOnlyBody } from "@/lib/parsed-order-sanitize";
 
 export type PickupIntentInput = {
   subject: string;
@@ -39,6 +40,14 @@ export function mailHasStrongPickupSignals(
 export async function classifyMailPickupIntent(
   input: PickupIntentInput,
 ): Promise<PickupIntentResult> {
+  if (
+    input.attachmentNames.length === 0 &&
+    isConversationalOnlyBody(input.bodyText) &&
+    !mailHasStrongPickupSignals(input.subject, input.bodyText, [])
+  ) {
+    return { importOrder: false, reason: "tik pokalbio tekstas be paėmimo duomenų" };
+  }
+
   if (mailHasStrongPickupSignals(input.subject, input.bodyText, input.attachmentNames)) {
     return { importOrder: true, reason: "stiprūs paėmimo/packing signalai (heuristika)" };
   }
